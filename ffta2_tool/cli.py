@@ -7,6 +7,22 @@ from pathlib import Path
 from ffta2_tool.crypto import verify_save_checksum
 from ffta2_tool.save import FFTA2Save
 from ffta2_tool.arm_tools import inspect_nds_rom, extract_arm9, extract_overlays
+from ffta2_tool.patcher import apply_meta_squad, META_SQUAD_BUILDS
+
+
+def cmd_patch_meta_squad(args: argparse.Namespace) -> int:
+    save = FFTA2Save(args.save_file)
+    apply_meta_squad(save, master_abilities=not args.no_abilities)
+    out_path = args.output if args.output else args.save_file
+    save.save(out_path)
+    print(f"[SUCCESS] Meta squad successfully applied to {out_path}!")
+    for build in META_SQUAD_BUILDS:
+        print(
+            f"  Unit {build['slot']} ({build['name']}): "
+            f"Job 0x{build['job_id']:02X}, Primary 0x{build['primary_set']:02X}, "
+            f"Secondary 0x{build['secondary_set']:02X}, Weapon 0x{build['weapon_id']:04X}"
+        )
+    return 0
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
@@ -112,6 +128,14 @@ def main() -> None:
     p_ext.add_argument("--output", "-o", default="arm9.bin", help="ARM9 output file")
     p_ext.add_argument("--overlays-dir", help="Optional directory to extract overlays to")
     p_ext.set_defaults(func=cmd_rom_extract)
+
+    # patch-meta-squad
+    p_patch = subparsers.add_parser("patch-meta-squad", help="Apply verified meta squad builds to save")
+    p_patch.add_argument("save_file", help="Path to .sav file")
+    p_patch.add_argument("--output", "-o", help="Output save path (overwrites if omitted)")
+    p_patch.add_argument("--no-abilities", action="store_true", help="Do not master abilities")
+    p_patch.set_defaults(func=cmd_patch_meta_squad)
+
 
     args = parser.parse_args()
     sys.exit(args.func(args))

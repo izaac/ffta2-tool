@@ -58,9 +58,41 @@ class Unit:
     def job_id(self) -> int:
         return self._data[OFF_UNIT_JOB_ID]
 
+    @job_id.setter
+    def job_id(self, val: int) -> None:
+        self._data[OFF_UNIT_JOB_ID] = val & 0xFF
+
+    @property
+    def primary_ability_set(self) -> int:
+        return self._data[0x16]
+
+    @primary_ability_set.setter
+    def primary_ability_set(self, val: int) -> None:
+        self._data[0x16] = val & 0xFF
+
+    @property
+    def secondary_ability_set(self) -> int:
+        return self._data[0x17]
+
+    @secondary_ability_set.setter
+    def secondary_ability_set(self, val: int) -> None:
+        self._data[0x17] = val & 0xFF
+
     @property
     def max_hp(self) -> int:
         return struct.unpack_from("<H", self._data, OFF_UNIT_MAX_HP)[0]
+
+    @max_hp.setter
+    def max_hp(self, val: int) -> None:
+        struct.pack_into("<H", self._data, OFF_UNIT_MAX_HP, val & 0xFFFF)
+
+    @property
+    def cur_hp(self) -> int:
+        return struct.unpack_from("<H", self._data, OFF_UNIT_CUR_HP)[0]
+
+    @cur_hp.setter
+    def cur_hp(self, val: int) -> None:
+        struct.pack_into("<H", self._data, OFF_UNIT_CUR_HP, val & 0xFFFF)
 
     @property
     def attack(self) -> int:
@@ -86,9 +118,31 @@ class Unit:
     def helm_id(self) -> int:
         return struct.unpack_from("<H", self._data, OFF_UNIT_EQUIP3)[0]
 
+    @helm_id.setter
+    def helm_id(self, item_id: int) -> None:
+        struct.pack_into("<H", self._data, OFF_UNIT_EQUIP3, item_id & 0xFFFF)
+
     @property
     def armor_id(self) -> int:
         return struct.unpack_from("<H", self._data, OFF_UNIT_EQUIP4)[0]
+
+    @armor_id.setter
+    def armor_id(self, item_id: int) -> None:
+        struct.pack_into("<H", self._data, OFF_UNIT_EQUIP4, item_id & 0xFFFF)
+
+    @property
+    def accessory_id(self) -> int:
+        return struct.unpack_from("<H", self._data, OFF_UNIT_EQUIP5)[0]
+
+    @accessory_id.setter
+    def accessory_id(self, item_id: int) -> None:
+        struct.pack_into("<H", self._data, OFF_UNIT_EQUIP5, item_id & 0xFFFF)
+
+    def master_all_abilities(self) -> None:
+        """Set all ability mastery bitfields to 0xFF."""
+        for i in range(0x56, len(self._data)):
+            self._data[i] = 0xFF
+
 
 
 class FFTA2Save:
