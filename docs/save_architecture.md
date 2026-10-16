@@ -100,13 +100,13 @@ Party units are stored starting at offset `0x0238` with a fixed stride of `0x11C
 | `+0x46` | uint16 | Defense |
 | `+0x48` | uint16 | Magic Attack |
 | `+0x4A` | uint16 | Magic Defense |
-| `+0x4C` | uint16 | Speed |
-| `+0x4E` | uint16 | Main Hand Weapon: `(item_id << 5) | flags` |
+| `+0x4C` | uint16 | Main Hand Weapon (16-bit unshifted item ID) |
+| `+0x4E` | uint16 | Off Hand / Shield (16-bit unshifted item ID) |
+| `+0x50` | uint16 | Head / Helmet (16-bit unshifted item ID) |
+| `+0x52` | uint16 | Body / Armor (16-bit unshifted item ID) |
+| `+0x54` | uint16 | Accessory (16-bit unshifted item ID) |
 
 ### Equipment Encoding:
-Equipment items are stored as 16-bit halfwords:
-```
-[15 ...................... 5] [4 ... 0]
-          Item ID                Flags (1 = Main Hand)
-```
-Example: Shortsword (Item `0x19`): `(0x19 << 5) | 1 = 0x0321`.
+Equipment items are stored as direct, unshifted 16-bit little-endian item IDs matching the internal ROM item tables (`equipment2.txt`).
+Example: Chirijiraden (Item `0x0018`): `0x18 0x00` at `+0x4C`.
+
