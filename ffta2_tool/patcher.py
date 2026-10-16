@@ -18,7 +18,7 @@ META_SQUAD_BUILDS: List[Dict[str, Any]] = [
         "secondary_set": 0x06,  # Chivalry (Paladin: Nurse, Saint Cross, Holy Blade)
         "weapon_id": 0x0018,    # Chirijiraden (+65 Atk, Fire Katana)
         "shield_id": 0x0000,    # None (Parivir single-wields katana safely)
-        "helm_id": 0x0139,      # Plumed Hat
+        "helm_id": 0x013F,      # Thief's Cap (+2 Speed)
         "armor_id": 0x015C,     # Ninja Gear (+24 Def, +4 Speed)
         "accessory_id": 0x0180, # Ninja Tabi (+2 Move)
     },
@@ -30,10 +30,10 @@ META_SQUAD_BUILDS: List[Dict[str, Any]] = [
         "primary_set": 0x1C,    # Sagacity (Gigaflare, Bio, Aero)
         "secondary_set": 0x1A,  # Alchemy (100% Item Delivery)
         "weapon_id": 0x010F,    # Zeus Mace (+30 Atk, +10 Magick)
-        "shield_id": 0x0122,    # Round Shield
-        "helm_id": 0x013E,      # Gold Hairpin
-        "armor_id": 0x0171,     # Lordly Robe (+18 Def, +35 MRes)
-        "accessory_id": 0x0179, # Sprint Shoes (+1 Move)
+        "shield_id": 0x0127,    # Genji Shield (+7 Def, +5 Evade, +2 MRes)
+        "helm_id": 0x013E,      # Gold Hairpin (+10 MRes, Silence immune)
+        "armor_id": 0x0171,     # Lordly Robe (+18 Def, +35 MRes, +5 Atk, +5 Mag)
+        "accessory_id": 0x017E, # Faerie Shoes (Teleport Movement!)
     },
     # Slot 2: Viera - Red Mage / Summoner
     {
@@ -58,8 +58,8 @@ META_SQUAD_BUILDS: List[Dict[str, Any]] = [
         "weapon_id": 0x00F0,    # Rocket Punch (Hand Cannon)
         "shield_id": 0x0000,    # None
         "helm_id": 0x013F,      # Thief's Cap (+2 Speed)
-        "armor_id": 0x015E,     # Wygar (+28 Def, +8 MRes)
-        "accessory_id": 0x0185, # Gauntlets (+5 Atk, +5 Def)
+        "armor_id": 0x015F,     # Mirage Vest (+30 Def, +12 MRes)
+        "accessory_id": 0x0184, # Genji Gloves (+5 Atk, +5 Def)
     },
     # Slot 4: Hume (Generic) - Hunter / Seer
     {
@@ -68,11 +68,11 @@ META_SQUAD_BUILDS: List[Dict[str, Any]] = [
         "job_id": 0x0C,         # Hunter
         "primary_set": 0x0C,    # Trapping (Hunter: Ultima Shot, Sonic Boom)
         "secondary_set": 0x0D,  # High Magick (Seer: Recharge, Magick Frenzy, Esuna)
-        "weapon_id": 0x00CA,    # Seventh Heaven (Greatbow)
+        "weapon_id": 0x00CA,    # Seventh Heaven (Greatbow: Ultima Shot)
         "shield_id": 0x0000,    # None
-        "helm_id": 0x013B,      # Feathered Cap
-        "armor_id": 0x015F,     # Mirage Vest
-        "accessory_id": 0x0187, # Fortune Ring (+5 Evade, +3 MRes)
+        "helm_id": 0x013F,      # Thief's Cap (+2 Speed)
+        "armor_id": 0x015C,     # Ninja Gear (+24 Def, +4 Speed)
+        "accessory_id": 0x017B, # Winged Boots (Float / Levitate)
     },
     # Slot 5: Moogle - Fusilier / Juggler
     {
@@ -83,9 +83,9 @@ META_SQUAD_BUILDS: List[Dict[str, Any]] = [
         "secondary_set": 0x2A,  # Acrobatics (Juggler: Smile Toss Quicken)
         "weapon_id": 0x00D4,    # Peacemaker (8-Range Gun)
         "shield_id": 0x0000,    # None
-        "helm_id": 0x013A,      # Green Beret (+2 Speed)
-        "armor_id": 0x0156,     # Survival Vest
-        "accessory_id": 0x0177, # Spiked Boots (+1 Jump, +4 Def)
+        "helm_id": 0x013F,      # Thief's Cap (+2 Speed)
+        "armor_id": 0x015F,     # Mirage Vest (+30 Def, +12 MRes)
+        "accessory_id": 0x0180, # Ninja Tabi (+2 Move)
     },
 ]
 

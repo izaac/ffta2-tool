@@ -8,6 +8,19 @@ from ffta2_tool.crypto import verify_save_checksum
 from ffta2_tool.save import FFTA2Save
 from ffta2_tool.arm_tools import inspect_nds_rom, extract_arm9, extract_overlays
 from ffta2_tool.patcher import apply_meta_squad, META_SQUAD_BUILDS
+from ffta2_tool.validator import validate_save
+
+
+def cmd_validate(args: argparse.Namespace) -> int:
+    save = FFTA2Save(args.save_file)
+    issues = validate_save(save)
+    if not issues:
+        print("[PASS] All clan units pass NDS engine stability validation!")
+        return 0
+    print(f"[FAIL] Found {len(issues)} stability issues:")
+    for iss in issues:
+        print(f"  [{iss.severity}] Unit {iss.unit_index} ({iss.field}): {iss.message}")
+    return 1
 
 
 def cmd_patch_meta_squad(args: argparse.Namespace) -> int:
@@ -135,6 +148,12 @@ def main() -> None:
     p_patch.add_argument("--output", "-o", help="Output save path (overwrites if omitted)")
     p_patch.add_argument("--master-abilities", action="store_true", help="Force master all abilities (may cause UI glitches)")
     p_patch.set_defaults(func=cmd_patch_meta_squad)
+
+    # validate
+    p_val = subparsers.add_parser("validate", help="Validate clan units against NDS UI crash conditions")
+    p_val.add_argument("save_file", help="Path to .sav file")
+    p_val.set_defaults(func=cmd_validate)
+
 
 
     args = parser.parse_args()
