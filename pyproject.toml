@@ -14,3 +14,28 @@ dependencies = []
 
 [project.scripts]
 ffta2-tool = "ffta2_tool.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pymarkdownlnt>=0.9.29",
+    "ruff>=0.8.0",
+]
+
+[tool.setuptools]
+packages = ["ffta2_tool"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "W",
+    "I",
+    "UP",
+    "B",
+    "C4",
+    "SIM",
+]

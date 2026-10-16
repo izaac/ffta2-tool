@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import struct
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Any
 
 
-def inspect_nds_rom(rom_path: str | Path) -> Dict[str, Any]:
+def inspect_nds_rom(rom_path: str | Path) -> dict[str, Any]:
     """Inspect NDS header parameters and binary offsets."""
     path = Path(rom_path)
     with path.open("rb") as f:
@@ -47,7 +47,7 @@ def extract_arm9(rom_path: str | Path, output_path: str | Path) -> Path:
     return out
 
 
-def extract_overlays(rom_path: str | Path, output_dir: str | Path) -> List[Path]:
+def extract_overlays(rom_path: str | Path, output_dir: str | Path) -> list[Path]:
     """Extract all overlays from the NDS ROM."""
     info = inspect_nds_rom(rom_path)
     out_dir = Path(output_dir)

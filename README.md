@@ -3,6 +3,7 @@
 Save editor and reverse engineering toolkit for **Final Fantasy Tactics A2: Grimoire of the Rift** (Nintendo DS).
 
 ## Features
+
 - **Pure Python**: Zero heavy external dependencies.
 - **Save Cryptography**: Native support for FFTA2's additive byte-stream cipher.
 - **Checksum Calculation**: Exact replication of the game's signed byte (`LDRSB`) weighted checksum routine (`0x0210D560`).
@@ -29,4 +30,6 @@ python3 -m ffta2_tool.cli rom-extract path/to/game.nds -o arm9.bin
 ```
 
 ## Documentation
+
 - [Save Architecture Reference](docs/save_architecture.md): Complete technical breakdown of save layout, cipher algorithms, and ARM9 disassembly offsets.
+- [Meta Squad Strategy Specification](docs/meta_squad_strategy.md): Verified builds, legal proficiencies, and endgame gear.

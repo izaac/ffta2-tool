@@ -18,19 +18,21 @@ for i in range(10):
     CHAR_DECODE_MAP[0x8E + i] = str(i)
 
 # Additional symbols
-CHAR_DECODE_MAP.update({
-    0x78: "!",
-    0x79: "?",
-    0x7A: ":",
-    0x7B: "/",
-    0x7C: ".",
-    0x7D: ",",
-    0x7E: "-",
-    0x80: "(",
-    0x81: ")",
-    0x84: '"',
-    0x85: "'",
-})
+CHAR_DECODE_MAP.update(
+    {
+        0x78: "!",
+        0x79: "?",
+        0x7A: ":",
+        0x7B: "/",
+        0x7C: ".",
+        0x7D: ",",
+        0x7E: "-",
+        0x80: "(",
+        0x81: ")",
+        0x84: '"',
+        0x85: "'",
+    }
+)
 
 CHAR_ENCODE_MAP = {v: k for k, v in CHAR_DECODE_MAP.items()}
 
@@ -49,8 +51,5 @@ def encode_ffta2_string(text: str, length: int = 16) -> bytes:
     """Encode an ASCII/Unicode string into FFTA2 character bytes."""
     out = bytearray(length)
     for idx, ch in enumerate(text[:length]):
-        if ch in CHAR_ENCODE_MAP:
-            out[idx] = CHAR_ENCODE_MAP[ch]
-        else:
-            out[idx] = 0x01  # fallback to space
+        out[idx] = CHAR_ENCODE_MAP.get(ch, 0x01)
     return bytes(out)

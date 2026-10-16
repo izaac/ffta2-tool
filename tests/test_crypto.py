@@ -1,6 +1,10 @@
 """Test suite for FFTA2 Save Cryptography and Checksum."""
 
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from ffta2_tool.crypto import (
     decrypt_save_payload,
     encrypt_save_payload,
@@ -51,7 +55,7 @@ def test_checksum_and_crypto():
     assert unit0.shield_id == 0x0121, f"Expected shield ID 0x0121 (Round Shield), got 0x{unit0.shield_id:X}"
     assert unit0.helm_id == 0x0139, f"Expected helm ID 0x0139 (Green Beret), got 0x{unit0.helm_id:X}"
     assert unit0.armor_id == 0x0144, f"Expected armor ID 0x0144 (Bronze Armor), got 0x{unit0.armor_id:X}"
-    print(f"[PASS] FFTA2Save loaded unit 0 equipment:")
+    print("[PASS] FFTA2Save loaded unit 0 equipment:")
     print(f"       Weapon: 0x{unit0.weapon_id:04X} (Shortsword)")
     print(f"       Shield: 0x{unit0.shield_id:04X} (Round Shield)")
     print(f"       Helm:   0x{unit0.helm_id:04X} (Green Beret)")
