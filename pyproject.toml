@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ffta2-tool"
+version = "0.1.0"
+description = "Final Fantasy Tactics A2 (NDS) Save Editor and Reverse Engineering Toolkit"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Jorge Izaac", email = "izaac@example.com" }]
+dependencies = []
+
+[project.scripts]
+ffta2-tool = "ffta2_tool.cli:main"
