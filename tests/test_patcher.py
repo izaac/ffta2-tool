@@ -55,7 +55,7 @@ def test_meta_squad_patcher():
         u0 = reloaded.get_unit(0)
         assert u0.job_id == 0x08  # Parivir
         assert u0.weapon_id == 0x0018  # Chirijiraden
-        assert u0.shield_id == 0x0074  # Hyakushiki-masamune
+        assert u0.shield_id == 0x0000  # Empty off-hand
         print(f"[PASS] Successfully patched, signed, and re-verified meta squad on {tmp_path}!")
     finally:
         if tmp_path.exists():

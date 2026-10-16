@@ -17,7 +17,7 @@ META_SQUAD_BUILDS: List[Dict[str, Any]] = [
         "primary_set": 0x08,    # Flair
         "secondary_set": 0x06,  # Chivalry (Paladin: Nurse, Saint Cross, Holy Blade)
         "weapon_id": 0x0018,    # Chirijiraden (+65 Atk, Fire Katana)
-        "shield_id": 0x0074,    # Hyakushiki-masamune (Dual Wield)
+        "shield_id": 0x0000,    # None (Parivir single-wields katana safely)
         "helm_id": 0x0139,      # Plumed Hat
         "armor_id": 0x015C,     # Ninja Gear (+24 Def, +4 Speed)
         "accessory_id": 0x0180, # Ninja Tabi (+2 Move)
@@ -90,8 +90,13 @@ META_SQUAD_BUILDS: List[Dict[str, Any]] = [
 ]
 
 
-def apply_meta_squad(save: FFTA2Save, master_abilities: bool = True) -> None:
-    """Apply verified meta squad builds to the first 6 clan members."""
+def apply_meta_squad(save: FFTA2Save, master_abilities: bool = False) -> None:
+    """Apply verified meta squad builds to the first 6 clan members.
+
+    Note: master_abilities is disabled by default to prevent out-of-bounds
+    ability bitfield corruption which causes black screens in the Unit Info UI.
+    Equipment provides required active abilities directly during battle.
+    """
     for build in META_SQUAD_BUILDS:
         unit = save.get_unit(build["slot"])
         if unit is None:
@@ -106,3 +111,4 @@ def apply_meta_squad(save: FFTA2Save, master_abilities: bool = True) -> None:
         unit.accessory_id = build["accessory_id"]
         if master_abilities:
             unit.master_all_abilities()
+

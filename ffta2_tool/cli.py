@@ -12,7 +12,7 @@ from ffta2_tool.patcher import apply_meta_squad, META_SQUAD_BUILDS
 
 def cmd_patch_meta_squad(args: argparse.Namespace) -> int:
     save = FFTA2Save(args.save_file)
-    apply_meta_squad(save, master_abilities=not args.no_abilities)
+    apply_meta_squad(save, master_abilities=args.master_abilities)
     out_path = args.output if args.output else args.save_file
     save.save(out_path)
     print(f"[SUCCESS] Meta squad successfully applied to {out_path}!")
@@ -133,7 +133,7 @@ def main() -> None:
     p_patch = subparsers.add_parser("patch-meta-squad", help="Apply verified meta squad builds to save")
     p_patch.add_argument("save_file", help="Path to .sav file")
     p_patch.add_argument("--output", "-o", help="Output save path (overwrites if omitted)")
-    p_patch.add_argument("--no-abilities", action="store_true", help="Do not master abilities")
+    p_patch.add_argument("--master-abilities", action="store_true", help="Force master all abilities (may cause UI glitches)")
     p_patch.set_defaults(func=cmd_patch_meta_squad)
 
 
