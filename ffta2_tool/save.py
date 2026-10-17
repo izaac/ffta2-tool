@@ -9,6 +9,8 @@ import struct
 from datetime import datetime
 from pathlib import Path
 
+from ffta2_tool.charset import decode_ffta2_string, encode_ffta2_string
+from ffta2_tool.config import get_default_backup_dir
 from ffta2_tool.crypto import (
     CHECKSUM_OFFSET,
     ENCRYPTED_END,
@@ -18,6 +20,19 @@ from ffta2_tool.crypto import (
     encrypt_save_payload,
     extract_keystream,
 )
+from ffta2_tool.mappings import (
+    JOB_PRIMARY_A_SETS,
+    get_character_name,
+    get_default_name_id_for_race,
+    resolve_character_name_id,
+    resolve_job_spec,
+)
+
+# Custom Clan and Leader name buffers in the decrypted save payload (20 bytes each)
+OFF_CLAN_NAME = 0x01D8  # payload + 0x18 (ARM9 0x020FA398)
+OFF_LEADER_NAME = 0x01EC  # payload + 0x2C (ARM9 0x020FA380)
+CUSTOM_NAME_BUFFER_LEN = 20
+MAX_CUSTOM_NAME_CHARS = 15
 
 # Party units in the decrypted save file
 UNIT_TABLE_BASE = 0x0238  # Unit 0 starts at 0x0238
@@ -28,12 +43,18 @@ MAX_UNITS = 24
 OFF_UNIT_CHAR_ID = 0x0D  # 1 byte (0x01 = Luso)
 OFF_UNIT_JOB_ID = 0x0E  # 1 byte (0x01 = Soldier)
 OFF_UNIT_RACE_ID = 0x0F  # 1 byte (0x01 = Hume)
+OFF_UNIT_ROSTER_INDEX = 0x11  # 1 byte (1-based roster index 1..24)
+OFF_UNIT_STATUS_FLAGS = 0x12  # 16-bit (0x0080 = active/recruited clan member)
+OFF_UNIT_NAME_ID = 0x14  # 16-bit (ROM character name ID, or 0x8001 for Luso custom name)
 OFF_UNIT_PRIMARY_A_SET = 0x16  # 1 byte (Action Ability Set 1)
 OFF_UNIT_SECONDARY_A_SET = 0x17  # 1 byte (Action Ability Set 2)
 OFF_UNIT_JOB_MSG_ID = 0x18  # 16-bit (Job Title Message ID: 1000 + Job ID)
 OFF_UNIT_JOB_STR_ID = 0x1A  # 16-bit (Job String ID: 0x9470 + Job ID)
 OFF_UNIT_LEVEL = 0x22  # 1 byte
+OFF_UNIT_EXP = 0x23  # 1 byte
 OFF_UNIT_SPEED = 0x24  # 1 byte
+OFF_UNIT_BASE_FLAGS_START = 0x25  # 9 bytes (0x25..0x2D initialized to 0x01 on recruited units)
+OFF_UNIT_BASE_FLAGS_END = 0x2E
 OFF_UNIT_MAX_HP = 0x3C  # 16-bit
 OFF_UNIT_CUR_HP = 0x3E  # 16-bit
 OFF_UNIT_MAX_MP = 0x40  # 16-bit
@@ -149,7 +170,7 @@ def auto_detect_save(search_paths: list[str] | None = None) -> str | None:
                 candidates.extend(glob.glob(f"{letter}:\\Saves\\NDS\\{SAVE_NAME_GLOB}"))
 
         # Local backup directory, repo examples directory, and current directory fallbacks
-        backup_dir = Path.home() / "Documents" / "FFTA2_Backups"
+        backup_dir = get_default_backup_dir()
         try:
             if backup_dir.is_dir():
                 candidates.extend(glob.glob(str(backup_dir / "*.sav")))
@@ -178,11 +199,13 @@ def auto_detect_save(search_paths: list[str] | None = None) -> str | None:
     return valid[0]
 
 
-def create_backup_snapshot(filepath: str | Path) -> Path:
-    """Creates a timestamped sibling snapshot '<name>.bak_YYYYMMDD_HHMMSS' before overwriting."""
+def create_backup_snapshot(filepath: str | Path, backup_dir: str | Path | None = None) -> Path:
+    """Creates a timestamped snapshot '<name>.bak_YYYYMMDD_HHMMSS' in the centralized backup folder."""
     path = Path(filepath)
+    dest_dir = get_default_backup_dir(backup_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_path = path.with_name(f"{path.name}.bak_{timestamp}")
+    backup_path = dest_dir / f"{path.name}.bak_{timestamp}"
     shutil.copy2(path, backup_path)
     return backup_path
 
@@ -197,6 +220,10 @@ class Unit:
     @property
     def character_id(self) -> int:
         return self._data[OFF_UNIT_CHAR_ID]
+
+    @character_id.setter
+    def character_id(self, val: int) -> None:
+        self._data[OFF_UNIT_CHAR_ID] = val & 0xFF
 
     @property
     def is_recruited(self) -> bool:
@@ -217,6 +244,46 @@ class Unit:
     @property
     def race_id(self) -> int:
         return self._data[OFF_UNIT_RACE_ID]
+
+    @race_id.setter
+    def race_id(self, val: int) -> None:
+        self._data[OFF_UNIT_RACE_ID] = val & 0xFF
+
+    @property
+    def roster_index(self) -> int:
+        return self._data[OFF_UNIT_ROSTER_INDEX]
+
+    @roster_index.setter
+    def roster_index(self, val: int) -> None:
+        self._data[OFF_UNIT_ROSTER_INDEX] = val & 0xFF
+
+    @property
+    def status_flags(self) -> int:
+        return struct.unpack_from("<H", self._data, OFF_UNIT_STATUS_FLAGS)[0]
+
+    @status_flags.setter
+    def status_flags(self, val: int) -> None:
+        struct.pack_into("<H", self._data, OFF_UNIT_STATUS_FLAGS, val & 0xFFFF)
+
+    @property
+    def name_id(self) -> int:
+        return struct.unpack_from("<H", self._data, OFF_UNIT_NAME_ID)[0]
+
+    @name_id.setter
+    def name_id(self, val: int) -> None:
+        struct.pack_into("<H", self._data, OFF_UNIT_NAME_ID, val & 0xFFFF)
+
+    @property
+    def name(self) -> str:
+        return get_character_name(self.name_id)
+
+    @property
+    def exp(self) -> int:
+        return self._data[OFF_UNIT_EXP]
+
+    @exp.setter
+    def exp(self, val: int) -> None:
+        self._data[OFF_UNIT_EXP] = val & 0xFF
 
     @property
     def primary_ability_set(self) -> int:
@@ -415,6 +482,36 @@ class FFTA2Save:
         decrypt_save_payload(self.plaintext, self.keystream)
 
     @property
+    def leader_name(self) -> str:
+        """Custom player/leader name stored in the decrypted payload at 0x01EC."""
+        return decode_ffta2_string(bytes(self.plaintext[OFF_LEADER_NAME : OFF_LEADER_NAME + CUSTOM_NAME_BUFFER_LEN]))
+
+    @leader_name.setter
+    def leader_name(self, name: str) -> None:
+        clean = str(name).strip()
+        if not clean:
+            raise ValueError("Leader name cannot be empty")
+        if len(clean) > MAX_CUSTOM_NAME_CHARS:
+            raise ValueError(f"Leader name '{clean}' exceeds maximum length of {MAX_CUSTOM_NAME_CHARS} characters")
+        encoded = encode_ffta2_string(clean, length=CUSTOM_NAME_BUFFER_LEN)
+        self.plaintext[OFF_LEADER_NAME : OFF_LEADER_NAME + CUSTOM_NAME_BUFFER_LEN] = encoded
+
+    @property
+    def clan_name(self) -> str:
+        """Custom clan name stored in the decrypted payload at 0x01D8."""
+        return decode_ffta2_string(bytes(self.plaintext[OFF_CLAN_NAME : OFF_CLAN_NAME + CUSTOM_NAME_BUFFER_LEN]))
+
+    @clan_name.setter
+    def clan_name(self, name: str) -> None:
+        clean = str(name).strip()
+        if not clean:
+            raise ValueError("Clan name cannot be empty")
+        if len(clean) > MAX_CUSTOM_NAME_CHARS:
+            raise ValueError(f"Clan name '{clean}' exceeds maximum length of {MAX_CUSTOM_NAME_CHARS} characters")
+        encoded = encode_ffta2_string(clean, length=CUSTOM_NAME_BUFFER_LEN)
+        self.plaintext[OFF_CLAN_NAME : OFF_CLAN_NAME + CUSTOM_NAME_BUFFER_LEN] = encoded
+
+    @property
     def slot_player_name(self) -> str:
         """Leader name shown on the load-screen card of the loaded slot."""
         from ffta2_tool.slots import SlotManager
@@ -444,6 +541,150 @@ class FFTA2Save:
         offset = UNIT_TABLE_BASE + index * UNIT_STRIDE
         unit_view = memoryview(self.plaintext)[offset : offset + UNIT_STRIDE]
         return Unit(unit_view, index)
+
+    @property
+    def units(self) -> list[Unit]:
+        """Return all 24 unit slot views (0..23)."""
+        return [u for i in range(MAX_UNITS) if (u := self.get_unit(i)) is not None]
+
+    def get_unit_name(self, index: int) -> str:
+        """Resolve the in-game display name for unit slot index (0..23).
+
+        ARM9 0x02085100 intercepts name_id & 0x7FFF == 1 and returns the custom
+        leader string at 0x01EC; all other IDs index JD_message_0.pak subfile 0.
+        """
+        unit = self.get_unit(index)
+        if unit is None or not unit.is_recruited:
+            return ""
+        if (unit.name_id & 0x7FFF) == 1 or unit.character_id == 1:
+            return self.leader_name or "Luso"
+        return unit.name
+
+    def rename_unit(self, unit_index: int, new_name: str | int) -> str:
+        """Rename a recruited unit (0..23) and return the resulting display name.
+
+        - Unit 0 (Luso / character_id 1): writes a custom string to 0x01EC and sets
+          name_id = 0x8001 (unless an explicit integer ROM name ID > 1 is given).
+        - Units 1..23: resolves new_name against the 778 ROM character names table
+          (or accepts a numeric ID 1..778 or 'random') and updates unit.name_id.
+        """
+        unit = self.get_unit(unit_index)
+        if unit is None:
+            raise ValueError(f"Invalid unit index: {unit_index} (must be 0..{MAX_UNITS - 1})")
+        if not unit.is_recruited:
+            raise ValueError(f"Unit slot {unit_index + 1} is empty (no recruited clan member)")
+
+        if (unit.character_id == 1 or unit_index == 0) and not isinstance(new_name, int):
+            clean = str(new_name).strip()
+            if clean.lower() != "random" and not clean.isdigit() and not clean.lower().startswith("0x"):
+                self.leader_name = clean
+                unit.name_id = 0x8001
+                return self.leader_name
+
+        resolved_id = resolve_character_name_id(new_name, race_id=unit.race_id)
+        if unit.character_id == 1:
+            unit.name_id = 0x8000 | resolved_id
+        else:
+            unit.name_id = resolved_id
+        return self.get_unit_name(unit_index)
+
+    def inject_unit(
+        self,
+        spec: str | int,
+        level: int = 50,
+        name: str | int | None = None,
+        unit_index: int | None = None,
+        master_abilities: bool = False,
+    ) -> tuple[int, Unit]:
+        """Inject a new recruit into the clan roster at unit_index (or the first free slot).
+
+        `spec` may be a build key from builds.toml (e.g. 'luso', 'nu_mou', 'viera',
+        'bangaa', 'hume', 'moogle'), a job name (e.g. 'Parivir', 'Nu Mou Sage', 'Red Mage'),
+        or a job ID (e.g. 0x1F). Returns (unit_index, unit).
+        """
+        from ffta2_tool.patcher import resolve_build
+        from ffta2_tool.stats import compute_god_stats
+
+        if unit_index is not None:
+            if not (0 <= unit_index < MAX_UNITS):
+                raise ValueError(f"Invalid unit index: {unit_index} (must be 0..{MAX_UNITS - 1})")
+            target_idx = unit_index
+        else:
+            free_idx = None
+            for i in range(MAX_UNITS):
+                u = self.get_unit(i)
+                if u is not None and not u.is_recruited:
+                    free_idx = i
+                    break
+            if free_idx is None:
+                raise ValueError(f"Clan roster is full ({MAX_UNITS}/{MAX_UNITS} units recruited)")
+            target_idx = free_idx
+
+        build = resolve_build(str(spec)) if isinstance(spec, str) else None
+        if build is not None:
+            job_id = int(build["job_id"])
+            _, race_id = resolve_job_spec(job_id)
+        else:
+            job_id, race_id = resolve_job_spec(spec)
+
+        clamped_level = max(1, min(99, int(level)))
+        unit = self.get_unit(target_idx)
+        assert unit is not None
+
+        # Clear the 0x11C-byte unit struct before populating
+        unit._data[:] = b"\x00" * UNIT_STRIDE
+        unit.character_id = 1 if target_idx == 0 else 0
+        unit.race_id = race_id
+        unit.job_id = job_id
+        unit.roster_index = target_idx + 1
+        unit.status_flags = 0x0080
+        unit._data[OFF_UNIT_BASE_FLAGS_START:OFF_UNIT_BASE_FLAGS_END] = b"\x01" * (
+            OFF_UNIT_BASE_FLAGS_END - OFF_UNIT_BASE_FLAGS_START
+        )
+        unit.level = clamped_level
+        unit.exp = 0
+
+        if target_idx == 0:
+            unit.name_id = 0x8001
+            if name is not None:
+                self.rename_unit(0, name)
+        elif name is not None:
+            unit.name_id = resolve_character_name_id(name, race_id=race_id)
+        else:
+            unit.name_id = get_default_name_id_for_race(race_id, slot_index=target_idx)
+
+        if build is not None:
+            unit.primary_ability_set = int(build["primary_set"])
+            unit.secondary_ability_set = int(build["secondary_set"])
+            unit.weapon_id = int(build["weapon_id"])
+            unit.shield_id = int(build["shield_id"])
+            unit.helm_id = int(build["helm_id"])
+            unit.armor_id = int(build["armor_id"])
+            unit.accessory_id = int(build["accessory_id"])
+            if build.get("r_ability"):
+                unit.r_ability = int(build["r_ability"])
+            if build.get("p_ability"):
+                unit.p_ability = int(build["p_ability"])
+        else:
+            unit.primary_ability_set = JOB_PRIMARY_A_SETS.get(job_id, 1)
+            unit.secondary_ability_set = 0
+
+        god = compute_god_stats(job_id, clamped_level)
+        unit.max_hp = god["hp"]
+        unit.cur_hp = god["hp"]
+        unit.max_mp = god["mp"]
+        unit.cur_mp = god["mp"]
+        unit.speed = god["speed"]
+        unit.attack = god["watk"]
+        unit.defense = god["wdef"]
+        unit.matk = god["mpow"]
+        unit.mdef = god["mres"]
+
+        if master_abilities:
+            unit.master_all_abilities()
+
+        self.sync_equipped_to_inventory()
+        return (target_idx, unit)
 
     def get_inventory(self) -> dict[int, tuple[int, int]]:
         """Returns mapping of item_id -> (total_count, equipped_count) from clan bag."""
@@ -495,10 +736,10 @@ class FFTA2Save:
         return added
 
     def sync_equipped_to_inventory(self, default_count: int = 50) -> None:
-        """Ensure all equipped items on units 0..5 are registered in the clan inventory table."""
-        for i in range(6):
+        """Ensure all equipped items on recruited units (0..23) are registered in the clan inventory table."""
+        for i in range(MAX_UNITS):
             unit = self.get_unit(i)
-            if unit and (unit.character_id != 0 or unit.job_id != 0):
+            if unit and unit.is_recruited:
                 equips = [unit.weapon_id, unit.shield_id, unit.helm_id, unit.armor_id, unit.accessory_id]
                 for eq in equips:
                     if eq != 0:
@@ -583,11 +824,16 @@ class FFTA2Save:
                 count += 1
         return count
 
-    def save(self, output_path: str | Path | None = None, backup: bool = True) -> Path:
+    def save(
+        self,
+        output_path: str | Path | None = None,
+        backup: bool = True,
+        backup_dir: str | Path | None = None,
+    ) -> Path:
         """Recompute checksum, re-encrypt payload, and save to disk.
 
         When overwriting an existing file and backup is True, a timestamped
-        '<name>.bak_YYYYMMDD_HHMMSS' snapshot is created first.
+        '<name>.bak_YYYYMMDD_HHMMSS' snapshot is created in the backup folder first.
         """
         out = Path(output_path) if output_path else self.path
 
@@ -617,7 +863,7 @@ class FFTA2Save:
         final_data = bytearray(sm.raw[: len(final_data)])
 
         if backup and out.exists():
-            backup_path = create_backup_snapshot(out)
+            backup_path = create_backup_snapshot(out, backup_dir=backup_dir)
             print(f"[*] Backup snapshot created: {backup_path}")
 
         atomic_write(out, final_data)

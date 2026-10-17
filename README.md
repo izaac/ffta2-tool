@@ -13,21 +13,33 @@ Save editor and reverse engineering toolkit for **Final Fantasy Tactics A2: Grim
 ## CLI Usage
 
 ```bash
-# Verify save file checksum
-python3 -m ffta2_tool.cli verify path/to/save.sav
-
-# Inspect save metadata and party roster
+# Inspect save metadata, clan stats, and recruited party roster (1-based units 1..24)
 python3 -m ffta2_tool.cli info path/to/save.sav
 
-# Equip weapon on a unit (e.g. Unit 1 with Chirijiraden, ID 24)
-python3 -m ffta2_tool.cli set-weapon path/to/save.sav --unit 1 --item-id 24
+# Create a standalone timestamped backup snapshot in ~/Documents/FFTA2_Backups
+python3 -m ffta2_tool.cli backup path/to/save.sav
 
-# Inspect ROM headers
-python3 -m ffta2_tool.cli rom-info path/to/game.nds
+# Rename Unit 1 (Luso, freeform string), a generic unit (ROM character name/ID), or the clan
+python3 -m ffta2_tool.cli rename path/to/save.sav --unit 1 --name "Ramza" --clan-name "Beoulve"
+python3 -m ffta2_tool.cli rename path/to/save.sav --unit 2 --name "Frimelda"
 
-# Extract ARM9 binary from ROM
-python3 -m ffta2_tool.cli rom-extract path/to/game.nds -o arm9.bin
+# Inject a new recruit into the next empty clan slot (by build key, job name, or job ID)
+python3 -m ffta2_tool.cli inject path/to/save.sav --job viera --level 50 --name "Frimelda" --master-abilities
+python3 -m ffta2_tool.cli inject path/to/save.sav --job "Nu Mou Sage" --level 99
+
+# Equip a single unit with a build from builds.toml
+python3 -m ffta2_tool.cli equip-build path/to/save.sav --unit 2 --build nu_mou --master-abilities
+
+# Patch the full 6-unit verified meta squad, clan perks, and difficulty
+python3 -m ffta2_tool.cli patch-meta-squad path/to/save.sav --difficulty hard
+python3 -m ffta2_tool.cli clan path/to/save.sav --all
+
+# Verify save checksums and unit stability rules
+python3 -m ffta2_tool.cli verify path/to/save.sav
+python3 -m ffta2_tool.cli validate path/to/save.sav
 ```
+
+Copy `config.example.toml` to `config.toml` (or `~/.config/ffta2-tool/config.toml`) or pass `--config path/to/config.toml` to customize save auto-detection paths, default slot (`1` or `2`), and `backup_dir`.
 
 ## Documentation
 

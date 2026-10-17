@@ -13,13 +13,16 @@ for i in range(26):
 for i in range(26):
     CHAR_DECODE_MAP[0x1C + i] = chr(ord("a") + i)
 
-# Digits 0-9: 0x8E - 0x97
+# Digits 0-9: 0x67 - 0x70 in ROM message tables (and 0x8E - 0x97 legacy fallback)
 for i in range(10):
     CHAR_DECODE_MAP[0x8E + i] = str(i)
+    CHAR_DECODE_MAP[0x67 + i] = str(i)
 
-# Additional symbols
+# Additional symbols (verified against JD_message_0.pak subfile 21)
 CHAR_DECODE_MAP.update(
     {
+        0x73: "!",
+        0x74: "?",
         0x78: "!",
         0x79: "?",
         0x7A: ":",
@@ -27,14 +30,31 @@ CHAR_DECODE_MAP.update(
         0x7C: ".",
         0x7D: ",",
         0x7E: "-",
+        0x7F: ".",
         0x80: "(",
         0x81: ")",
+        0x83: "'",
         0x84: '"',
         0x85: "'",
+        0x8D: "-",
+        0x9B: "↑",
+        0x9C: "↓",
     }
 )
 
 CHAR_ENCODE_MAP = {v: k for k, v in CHAR_DECODE_MAP.items()}
+for i in range(10):
+    CHAR_ENCODE_MAP[str(i)] = 0x67 + i
+CHAR_ENCODE_MAP.update(
+    {
+        "!": 0x73,
+        "?": 0x74,
+        ".": 0x7F,
+        ",": 0x7E,
+        "'": 0x83,
+        "-": 0x8D,
+    }
+)
 
 
 def decode_ffta2_string(data: bytes, max_len: int = 16) -> str:

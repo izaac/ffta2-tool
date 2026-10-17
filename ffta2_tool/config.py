@@ -25,6 +25,8 @@ REQUIRED_BUILD_KEYS = (
     "accessory_id",
 )
 
+DEFAULT_CONFIG_EXAMPLE_PATH = Path(__file__).resolve().parent.parent / "config.example.toml"
+
 
 def _strip_comment(line: str) -> str:
     """Strips trailing comments not contained inside quotes."""
@@ -70,11 +72,14 @@ def _parse_scalar(val: str) -> Any:
 
 
 def _parse_simple_toml(content: str) -> dict[str, Any]:
-    """Minimal fallback parser for the table/key subset of TOML used by builds.toml."""
+    """Minimal fallback parser for the table/key subset of TOML used by builds.toml and config.toml."""
     data: dict[str, Any] = {}
     section: dict[str, Any] = data
-    for raw_line in content.splitlines():
-        line = _strip_comment(raw_line)
+    lines = content.splitlines()
+    idx = 0
+    while idx < len(lines):
+        line = _strip_comment(lines[idx])
+        idx += 1
         if not line:
             continue
         if line.startswith("[") and line.endswith("]"):
@@ -88,7 +93,17 @@ def _parse_simple_toml(content: str) -> dict[str, Any]:
         if "=" not in line:
             continue
         key, val = line.split("=", 1)
-        section[key.strip()] = _parse_scalar(val.strip())
+        val = val.strip()
+        while val.startswith("[") and not val.endswith("]") and idx < len(lines):
+            next_line = _strip_comment(lines[idx])
+            idx += 1
+            if next_line:
+                val = f"{val} {next_line}"
+        if val.startswith("[") and val.endswith("]"):
+            inner = val[1:-1].strip()
+            if inner.endswith(","):
+                val = f"[{inner[:-1].strip()}]"
+        section[key.strip()] = _parse_scalar(val)
     return data
 
 
@@ -103,6 +118,86 @@ def _read_toml(path: Path) -> dict[str, Any]:
     return _parse_simple_toml(content)
 
 
+def get_default_backup_dir(custom_dir: str | Path | None = None) -> Path:
+    """Returns the centralized directory for timestamped save backups."""
+    if custom_dir:
+        return Path(os.path.expanduser(str(custom_dir)))
+    env_dir = os.environ.get("FFTA2_BACKUP_DIR")
+    if env_dir:
+        return Path(os.path.expanduser(env_dir))
+    return Path.home() / "Documents" / "FFTA2_Backups"
+
+
+def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
+    """Loads user configuration from config.toml if available.
+
+    Search priority:
+    1. Explicit config_path argument (or FFTA2_CONFIG environment variable)
+    2. ./config.toml (current working directory)
+    3. ~/.config/ffta2-tool/config.toml
+    """
+    candidates: list[Path] = []
+    if config_path:
+        candidates.append(Path(os.path.expanduser(str(config_path))))
+    elif os.environ.get("FFTA2_CONFIG"):
+        candidates.append(Path(os.path.expanduser(os.environ["FFTA2_CONFIG"])))
+    else:
+        candidates.append(Path("config.toml"))
+        candidates.append(Path.home() / ".config" / "ffta2-tool" / "config.toml")
+
+    for path in candidates:
+        if path.is_file():
+            try:
+                raw = _read_toml(path)
+                return {
+                    "paths": raw.get("paths", {}) if isinstance(raw.get("paths"), dict) else {},
+                    "defaults": raw.get("defaults", {}) if isinstance(raw.get("defaults"), dict) else {},
+                }
+            except OSError:
+                break
+
+    return {"paths": {}, "defaults": {}}
+
+
+def _resolve_builds_file(builds_path: str | Path | None = None) -> Path | None:
+    if builds_path:
+        target = Path(os.path.expanduser(str(builds_path)))
+        return target if target.is_file() else None
+    target = Path(__file__).resolve().parent.parent / "builds.toml"
+    if not target.is_file():
+        local = Path("builds.toml")
+        target = local if local.is_file() else target
+    return target if target.is_file() else None
+
+
+def load_builds_by_key(builds_path: str | Path | None = None) -> dict[str, dict[str, Any]]:
+    """Loads builds from builds.toml keyed by their TOML table key (e.g. 'luso', 'nu_mou')."""
+    target = _resolve_builds_file(builds_path)
+    if target is None:
+        return {}
+    try:
+        raw_data = _read_toml(target)
+        raw_builds = raw_data.get("builds", {})
+    except OSError:
+        return {}
+
+    keyed: dict[str, dict[str, Any]] = {}
+    if isinstance(raw_builds, dict):
+        for k, entry in raw_builds.items():
+            if isinstance(entry, dict) and all(req in entry for req in REQUIRED_BUILD_KEYS):
+                entry_copy = dict(entry)
+                entry_copy.setdefault("key", str(k).lower())
+                keyed[str(k).lower()] = entry_copy
+    elif isinstance(raw_builds, list):
+        for entry in raw_builds:
+            if isinstance(entry, dict) and all(req in entry for req in REQUIRED_BUILD_KEYS):
+                k = str(entry["name"]).lower().replace(" ", "_")
+                entry_copy = dict(entry)
+                entry_copy.setdefault("key", k)
+                keyed[k] = entry_copy
+    return keyed
+
+
 def load_builds(builds_path: str | Path | None = None) -> list[dict[str, Any]]:
     """Loads the meta squad builds database from builds.toml.
 
@@ -114,34 +209,7 @@ def load_builds(builds_path: str | Path | None = None) -> list[dict[str, Any]]:
     Returns a list of build dicts sorted by slot. Invalid or missing entries are
     skipped; an empty list is returned when no usable builds file is found.
     """
-    if builds_path:
-        target = Path(os.path.expanduser(str(builds_path)))
-        if not target.is_file():
-            return []
-    else:
-        target = Path(__file__).resolve().parent.parent / "builds.toml"
-        if not target.is_file():
-            local = Path("builds.toml")
-            target = local if local.is_file() else target
-        if not target.is_file():
-            return []
-
-    try:
-        raw_data = _read_toml(target)
-        raw_builds = raw_data.get("builds", {})
-    except OSError:
-        return []
-
-    builds: list[dict[str, Any]] = []
-    entries = (
-        raw_builds if isinstance(raw_builds, list) else (raw_builds.values() if isinstance(raw_builds, dict) else [])
-    )
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        if not all(key in entry for key in REQUIRED_BUILD_KEYS):
-            continue
-        builds.append(entry)
-
+    keyed = load_builds_by_key(builds_path)
+    builds = list(keyed.values())
     builds.sort(key=lambda b: int(b["slot"]))
     return builds

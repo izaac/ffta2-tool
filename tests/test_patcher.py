@@ -123,20 +123,37 @@ def test_parse_simple_toml():
 
 
 def test_backup_snapshot():
-    """Verify create_backup_snapshot writes a timestamped sibling copy."""
+    """Verify create_backup_snapshot writes a timestamped copy to the backup folder."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        save_path = Path(tmpdir) / "Test Save.sav"
+        root = Path(tmpdir)
+        save_path = root / "Test Save.sav"
+        bdir = root / "backups"
         payload = b"FFTA2-SAVE-DATA" * 8
         save_path.write_bytes(payload)
 
-        backup_path = create_backup_snapshot(save_path)
+        backup_path = create_backup_snapshot(save_path, backup_dir=bdir)
 
         assert backup_path.exists(), "Backup snapshot was not created"
+        assert backup_path.parent == bdir.resolve(), f"Expected backup in {bdir}, got {backup_path.parent}"
         assert backup_path.name.startswith("Test Save.sav.bak_"), backup_path.name
         stamp = backup_path.name.split(".bak_", 1)[1]
         assert len(stamp) == len("YYYYMMDD_HHMMSS") and stamp[8] == "_", f"Bad timestamp: {stamp}"
         assert backup_path.read_bytes() == payload, "Backup content mismatch"
-    print("[PASS] Timestamped backup snapshot created with expected name and content.")
+
+        # Verify FFTA2_BACKUP_DIR environment variable override
+        env_bdir = root / "env_backups"
+        old_env = os.environ.get("FFTA2_BACKUP_DIR")
+        os.environ["FFTA2_BACKUP_DIR"] = str(env_bdir)
+        try:
+            env_backup = create_backup_snapshot(save_path)
+            assert env_backup.parent == env_bdir.resolve()
+            assert env_backup.read_bytes() == payload
+        finally:
+            if old_env is None:
+                os.environ.pop("FFTA2_BACKUP_DIR", None)
+            else:
+                os.environ["FFTA2_BACKUP_DIR"] = old_env
+    print("[PASS] Timestamped backup snapshot created in centralized backup folder.")
 
 
 def test_atomic_write():
@@ -762,6 +779,19 @@ def test_operations_idempotent():
     def set_hard(save):
         save.difficulty = 1
 
+    def rename_ops(save):
+        save.clan_name = "Kupo"
+        save.rename_unit(0, "Ramza")
+        save.rename_unit(1, "Frimelda")
+
+    def inject_slot7(save):
+        save.inject_unit("viera", level=50, name="Frimelda", unit_index=6, master_abilities=True)
+
+    def equip_slot2(save):
+        from ffta2_tool.patcher import equip_unit_build
+
+        equip_unit_build(save, 1, "nu_mou", master_abilities=True, topup_stats=True)
+
     ops = {
         "load/save": (0, via_save(0, lambda save: None)),
         "set-weapon slot 2": (1, via_save(1, set_weapon)),
@@ -770,6 +800,9 @@ def test_operations_idempotent():
         "set-difficulty slot 2": (1, via_save(1, set_hard)),
         "master-abilities": (0, via_save(0, FFTA2Save.master_all_unit_abilities)),
         "clan --all": (1, via_save(1, clan_all)),
+        "rename slot 2": (1, via_save(1, rename_ops)),
+        "inject unit 7 slot 2": (1, via_save(1, inject_slot7)),
+        "equip-build unit 2 slot 2": (1, via_save(1, equip_slot2)),
         "slots set-difficulty": (1, via_slots(lambda sm: sm.set_slot_difficulty(1, 2))),
         "slots wipe-quicksave": (None, via_slots(SlotManager.deactivate_quicksave)),
         "slots copy 1->2": (1, via_slots(copy_slot)),
@@ -794,10 +827,274 @@ def test_operations_idempotent():
     print(f"[PASS] {len(ops)} save operations are byte-for-byte idempotent and keep both slots valid.")
 
 
+def test_load_config():
+    """Verify load_config parses config.example.toml and custom TOML files."""
+    from ffta2_tool.config import DEFAULT_CONFIG_EXAMPLE_PATH, load_builds_by_key, load_config
+
+    assert DEFAULT_CONFIG_EXAMPLE_PATH.exists(), "config.example.toml missing"
+    example_cfg = load_config(DEFAULT_CONFIG_EXAMPLE_PATH)
+    assert "paths" in example_cfg and "defaults" in example_cfg
+    assert example_cfg["defaults"]["slot"] == 1
+
+    by_key = load_builds_by_key()
+    assert set(by_key.keys()) == {"luso", "nu_mou", "viera", "bangaa", "hume", "moogle"}
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cfg_file = Path(tmpdir) / "custom_config.toml"
+        cfg_file.write_text(
+            '[paths]\nsave_search_paths = [\n  "/tmp/a/*.sav",\n  "/tmp/b/*.sav",\n]\n'
+            'backup_dir = "/tmp/my_backups"\n\n[defaults]\nslot = 2\n',
+            encoding="utf-8",
+        )
+        cfg = load_config(cfg_file)
+        assert cfg["paths"]["save_search_paths"] == ["/tmp/a/*.sav", "/tmp/b/*.sav"]
+        assert cfg["paths"]["backup_dir"] == "/tmp/my_backups"
+        assert cfg["defaults"]["slot"] == 2
+    print("[PASS] load_config and load_builds_by_key verified.")
+
+
+def test_character_names_and_charset():
+    """Verify FFTA2 character name table, charset digits/punctuation, and name resolver."""
+    from ffta2_tool.character_names import (
+        CHARACTER_NAMES,
+        get_character_name,
+        get_default_name_id_for_race,
+        resolve_character_name_id,
+    )
+    from ffta2_tool.charset import decode_ffta2_string, encode_ffta2_string
+
+    assert len(CHARACTER_NAMES) == 779
+    assert get_character_name(0x8001) == "Luso"
+    assert get_character_name(0x8003) == "Adelle"
+    assert get_character_name(48) == "Frimelda"
+    assert get_character_name(109) == "Ganoslal"
+    assert get_character_name(408) == "Yuma"
+
+    # Exact case-insensitive name lookup, numeric ID, and race-appropriate default
+    assert resolve_character_name_id("frimelda") == 48
+    assert resolve_character_name_id("Ganoslal") == 109
+    assert resolve_character_name_id("408") == 408
+    assert resolve_character_name_id("0x8005") == 0x8005
+    nid = resolve_character_name_id("random", race_id=4)
+    assert 281 <= nid <= 429 and get_default_name_id_for_race(4, 2) in range(281, 430)
+
+    # Roundtrip charset encoding with letters, digits, and punctuation
+    for text in ("Luso", "Gully", "Clan 99!", "A-B's?"):
+        encoded = encode_ffta2_string(text, length=20)
+        assert len(encoded) == 20
+        assert decode_ffta2_string(encoded) == text
+    print("[PASS] Character names table and FFTA2 string encoding/decoding verified.")
+
+
+def test_rename_unit_and_clan():
+    """Verify renaming Luso (custom string), generic units (ROM table), and the clan."""
+    from ffta2_tool.slots import SlotManager
+
+    save = FFTA2Save(EXAMPLE_SAVE)
+    assert save.leader_name == "Luso"
+    assert save.clan_name == "Gully"
+    assert save.get_unit_name(0) == "Luso"
+    assert save.get_unit_name(1) == "Ganoslal"
+    assert save.get_unit_name(2) == "Yuma"
+
+    # Rename Luso and clan with custom strings
+    assert save.rename_unit(0, "Ramza") == "Ramza"
+    save.clan_name = "Beoulve"
+    assert save.leader_name == "Ramza"
+    assert save.clan_name == "Beoulve"
+    assert save.get_unit_name(0) == "Ramza"
+
+    # Rename generic unit 2 (index 1) by ROM table name and by ID
+    assert save.rename_unit(1, "Frimelda") == "Frimelda"
+    assert save.get_unit_name(1) == "Frimelda"
+    assert save.get_unit(1).name_id == 48
+
+    assert save.rename_unit(1, "408") == "Yuma"
+    assert save.get_unit_name(1) == "Yuma"
+    assert save.get_unit(1).name_id == 408
+
+    # Reject unknown ROM name on non-leader unit
+    try:
+        save.rename_unit(1, "NotARomName")
+        raise AssertionError("rename_unit accepted unknown ROM name on non-leader")
+    except ValueError as e:
+        assert "ROM character name table" in str(e)
+
+    # Verify save/reload and load-screen preview leader_name sync
+    with tempfile.NamedTemporaryFile(suffix=".sav", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        save.save(tmp_path, backup=False)
+        reloaded = FFTA2Save(tmp_path)
+        assert reloaded.leader_name == "Ramza"
+        assert reloaded.clan_name == "Beoulve"
+        assert reloaded.get_unit_name(0) == "Ramza"
+        assert reloaded.get_unit_name(1) == "Yuma"
+        sm = SlotManager(tmp_path.read_bytes())
+        assert sm.get_slot_preview(0)["leader_name"] == "Ramza"
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+    print("[PASS] Unit and clan renaming verified with load-screen preview sync.")
+
+
+def test_inject_unit():
+    """Verify injecting new recruits by build key, job name, and hex job ID."""
+    from ffta2_tool.slots import SlotManager
+
+    save = FFTA2Save(EXAMPLE_SAVE)
+    assert sum(1 for u in save.units if u.is_recruited) == 6
+
+    # 1. Inject by build key into next available slot (index 6 -> Unit 7)
+    idx1, u1 = save.inject_unit("viera", level=50, name="Frimelda")
+    assert idx1 == 6
+    assert u1.is_recruited
+    assert u1.job_id == 0x27  # Red Mage
+    assert u1.race_id == 4  # Viera
+    assert u1.roster_index == 7
+    assert u1.status_flags == 0x0080
+    assert u1.level == 50
+    assert u1.weapon_id == 0x0050  # Femme Fatale
+    assert save.get_unit_name(idx1) == "Frimelda"
+
+    # 2. Inject by job name into next available slot (index 7 -> Unit 8) with mastered abilities
+    idx2, u2 = save.inject_unit("Nu Mou Sage", level=99, master_abilities=True)
+    assert idx2 == 7
+    assert u2.job_id == 0x1F  # Sage
+    assert u2.race_id == 3  # Nu Mou
+    assert u2.roster_index == 8
+    assert u2.level == 99
+
+    # 3. Inject by hex job ID into explicit slot (index 10 -> Unit 11)
+    idx3, u3 = save.inject_unit("0x08", level=30, unit_index=10)
+    assert idx3 == 10
+    assert u3.job_id == 0x08  # Parivir
+    assert u3.race_id == 1  # Hume
+    assert u3.roster_index == 11
+    assert u3.level == 30
+
+    # Validator must report 0 errors on save with injected units
+    errors = [i for i in validate_save(save) if i.severity == "ERROR"]
+    assert not errors, f"Unexpected validation errors after inject_unit: {errors}"
+
+    # Verify save/reload updates preview member_count to 9 (6 original + 3 injected)
+    with tempfile.NamedTemporaryFile(suffix=".sav", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        save.save(tmp_path, backup=False)
+        sm = SlotManager(tmp_path.read_bytes())
+        assert sm.get_slot_preview(0)["member_count"] == 9
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+    print("[PASS] Recruit injection verified for build keys, job names, and hex IDs.")
+
+
+def test_equip_unit_build():
+    """Verify equipping a build from builds.toml onto a single unit."""
+    from ffta2_tool.patcher import equip_unit_build
+
+    save = FFTA2Save(EXAMPLE_SAVE)
+    info = equip_unit_build(save, 2, "viera", master_abilities=True, topup_stats=True)
+    u2 = save.get_unit(2)
+    assert u2.job_id == 0x27
+    assert u2.weapon_id == 0x0050
+    assert u2.p_ability == 0x036A  # Blood Price
+    assert info["job_id"] == 0x27
+    errors = [i for i in validate_save(save) if i.severity == "ERROR"]
+    assert not errors, f"Validation errors after equip_unit_build: {errors}"
+    print("[PASS] equip_unit_build verified.")
+
+
+def test_cli_new_commands():
+    """Verify CLI subcommands backup, rename, inject, equip-build, and clan --clan-name."""
+    import subprocess
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        sav = root / "test.sav"
+        bdir = root / "backups"
+        cfg = root / "config.toml"
+        sav.write_bytes(EXAMPLE_SAVE.read_bytes())
+        cfg.write_text(
+            f'[paths]\nsave_search_paths = ["{sav.as_posix()}"]\n'
+            f'backup_dir = "{bdir.as_posix()}"\n[defaults]\nslot = 1\n',
+            encoding="utf-8",
+        )
+
+        def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [sys.executable, "-m", "ffta2_tool.cli", *args],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+        # 1. Standalone backup command (auto-detecting save via config.toml save_search_paths)
+        res = run_cli("backup", "--config", str(cfg))
+        assert "Backup snapshot created" in res.stdout
+        backups = list(bdir.glob("test.sav.bak_*"))
+        assert len(backups) == 1
+
+        # 2. Rename unit 1 and clan
+        run_cli(
+            "rename",
+            str(sav),
+            "--config",
+            str(cfg),
+            "--unit",
+            "1",
+            "--name",
+            "Ramza",
+            "--clan-name",
+            "Beoulve",
+        )
+        reloaded = FFTA2Save(sav)
+        assert reloaded.leader_name == "Ramza"
+        assert reloaded.clan_name == "Beoulve"
+
+        # 3. Inject unit 7
+        run_cli(
+            "inject",
+            str(sav),
+            "--config",
+            str(cfg),
+            "--job",
+            "viera",
+            "--level",
+            "60",
+            "--name",
+            "Frimelda",
+            "--master-abilities",
+        )
+        reloaded = FFTA2Save(sav)
+        assert reloaded.get_unit(6).is_recruited
+        assert reloaded.get_unit(6).level == 60
+        assert reloaded.get_unit_name(6) == "Frimelda"
+
+        # 4. Equip build on unit 7
+        run_cli(
+            "equip-build",
+            str(sav),
+            "--config",
+            str(cfg),
+            "--unit",
+            "7",
+            "--build",
+            "bangaa",
+            "--master-abilities",
+        )
+        reloaded = FFTA2Save(sav)
+        assert reloaded.get_unit(6).job_id == 0x16  # Cannoneer
+    print("[PASS] CLI subcommands backup, rename, inject, and equip-build verified.")
+
+
 if __name__ == "__main__":
     test_mappings()
     test_parse_simple_toml()
     test_load_builds()
+    test_load_config()
+    test_character_names_and_charset()
     test_backup_snapshot()
     test_atomic_write()
     test_auto_detect_save()
@@ -808,5 +1105,9 @@ if __name__ == "__main__":
     test_difficulty_roundtrip()
     test_slot_record_mapping()
     test_clan_perks()
+    test_rename_unit_and_clan()
+    test_inject_unit()
+    test_equip_unit_build()
+    test_cli_new_commands()
     test_operations_idempotent()
     test_meta_squad_patcher()

@@ -7,6 +7,16 @@ Modeled after ffta_tool/mappings.py.
 
 from __future__ import annotations
 
+from ffta2_tool.character_names import (
+    CHARACTER_NAMES,
+    NAME_GROUP_FEMALE,
+    NAME_GROUP_MALE,
+    NAME_GROUP_MONSTER,
+    get_character_name,
+    get_default_name_id_for_race,
+    resolve_character_name_id,
+)
+
 # ---------------------------------------------------------------------------
 # Races (1..7)
 # ---------------------------------------------------------------------------
@@ -547,6 +557,8 @@ KNOWN_ITEMS: dict[int, str] = {
 MAX_VALID_EQUIP_ID: int = 0x019A
 MAX_VALID_ABILITY_ID: int = 482
 
+RACE_NAME_TO_ID: dict[str, int] = {name.lower(): rid for rid, name in RACE_NAMES.items()}
+
 
 # ---------------------------------------------------------------------------
 # Helper Lookup Functions
@@ -563,9 +575,46 @@ def get_job_race(job_id: int) -> str:
     return entry[1] if entry else "Unknown"
 
 
+def get_job_race_id(job_id: int) -> int:
+    """Returns the canonical race ID (1..7) for a given job ID."""
+    race_name = get_job_race(job_id).lower()
+    return RACE_NAME_TO_ID.get(race_name, 1)
+
+
 def get_race_name(race_id: int) -> str:
     """Returns canonical race name for a given race ID."""
     return RACE_NAMES.get(race_id, f"Unknown_Race_0x{race_id:02X}")
+
+
+def resolve_job_spec(spec: str | int) -> tuple[int, int]:
+    """Resolves a job ID or job name (e.g. 'Parivir', 'Nu Mou Sage', '0x1F') into (job_id, race_id)."""
+    if isinstance(spec, int):
+        if spec in JOB_NAMES:
+            return (spec, get_job_race_id(spec))
+        raise ValueError(f"Unknown job ID 0x{spec:02X}")
+
+    clean = str(spec).strip()
+    if not clean:
+        raise ValueError("Job specification cannot be empty")
+
+    try:
+        jid = int(clean, 0)
+        if jid in JOB_NAMES:
+            return (jid, get_job_race_id(jid))
+        raise ValueError(f"Unknown job ID 0x{jid:02X}")
+    except ValueError as err:
+        if "Unknown job ID" in str(err):
+            raise
+
+    norm = clean.lower().replace("_", " ").replace("-", " ")
+    norm = " ".join(norm.split())
+
+    for jid, (jname, rname) in JOB_NAMES.items():
+        full = f"{rname} {jname}".lower()
+        if norm == full or norm == jname.lower():
+            return (jid, get_job_race_id(jid))
+
+    raise ValueError(f"Unknown job '{clean}'. Specify a valid FFTA2 job name (e.g. 'Parivir', 'Sage') or hex ID.")
 
 
 def get_item_name(item_id: int) -> str:
@@ -600,23 +649,32 @@ def is_heavy_armor_capable(job_id: int) -> bool:
 
 
 __all__ = [
+    "CHARACTER_NAMES",
     "HEAVY_ARMOR_JOBS",
     "JOB_NAMES",
     "JOB_PRIMARY_A_SETS",
     "KNOWN_ITEMS",
     "MAX_VALID_ABILITY_ID",
     "MAX_VALID_EQUIP_ID",
+    "NAME_GROUP_FEMALE",
+    "NAME_GROUP_MALE",
+    "NAME_GROUP_MONSTER",
     "RACE_JOBS",
     "RACE_NAMES",
     "REACTION_ABILITIES",
     "SHIELD_CAPABLE_JOBS",
     "SUPPORT_ABILITIES",
+    "get_character_name",
+    "get_default_name_id_for_race",
     "get_item_id",
     "get_item_name",
     "get_job_name",
     "get_job_race",
+    "get_job_race_id",
     "get_race_name",
     "is_heavy_armor_capable",
     "is_shield_capable",
     "is_valid_item_id",
+    "resolve_character_name_id",
+    "resolve_job_spec",
 ]

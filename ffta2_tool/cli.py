@@ -1,17 +1,21 @@
 """FFTA2 Command Line Interface."""
 
+from __future__ import annotations
+
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 from ffta2_tool.arm_tools import extract_arm9, extract_overlays, inspect_nds_rom
+from ffta2_tool.config import load_config
 from ffta2_tool.mappings import (
     get_item_name,
     get_job_name,
     get_race_name,
 )
-from ffta2_tool.patcher import META_SQUAD_BUILDS, apply_meta_squad
-from ffta2_tool.save import FFTA2Save, auto_detect_save
+from ffta2_tool.patcher import META_SQUAD_BUILDS, apply_meta_squad, equip_unit_build
+from ffta2_tool.save import MAX_UNITS, FFTA2Save, auto_detect_save, create_backup_snapshot
 from ffta2_tool.slots import SlotManager
 from ffta2_tool.validator import validate_save, validate_unit
 
@@ -28,18 +32,34 @@ SAVE_COMMANDS = {
     "set-difficulty",
     "master-abilities",
     "clan",
+    "rename",
+    "inject",
+    "equip-build",
+    "backup",
 }
 
 
-def resolve_save_file(requested: str | None) -> str | None:
-    """Resolves an explicit save path or auto-detects one; returns None if unresolved."""
+def resolve_save_file(requested: str | None, cfg: dict[str, Any] | None = None) -> str | None:
+    """Resolves an explicit save path, config.toml default, or auto-detects one; returns None if unresolved."""
     if requested:
         p = Path(requested).expanduser()
         if not p.is_file():
             print(f"Error: Save file not found: {p}", file=sys.stderr)
             sys.exit(1)
         return str(p)
-    detected = auto_detect_save()
+
+    paths_cfg = (cfg or {}).get("paths", {})
+    cfg_save = paths_cfg.get("save_file")
+    if cfg_save:
+        p = Path(str(cfg_save)).expanduser()
+        if p.is_file():
+            print(f"[*] Using configured save: {p}")
+            return str(p)
+
+    search_paths = paths_cfg.get("search_paths") or paths_cfg.get("save_search_paths")
+    if not isinstance(search_paths, list):
+        search_paths = None
+    detected = auto_detect_save(search_paths=search_paths)
     if detected:
         print(f"[*] Auto-detected save: {detected}")
     return detected
@@ -50,13 +70,136 @@ def _add_slot_arg(parser: argparse.ArgumentParser) -> None:
         "--slot",
         type=int,
         choices=[1, 2],
-        default=1,
-        help="Slot index to inspect or modify (1 or 2, default: 1)",
+        default=None,
+        help="Slot index to inspect or modify (1 or 2, default: 1 or config.toml default)",
     )
 
 
+def _add_common_write_args(parser: argparse.ArgumentParser) -> None:
+    _add_slot_arg(parser)
+    parser.add_argument("--output", "-o", help="Output save path (overwrites if omitted)")
+    parser.add_argument("--no-backup", action="store_true", help="Skip the pre-write timestamped backup snapshot")
+    parser.add_argument("--config", help="Path to user config.toml")
+
+
+def _slot_idx(args: argparse.Namespace) -> int:
+    slot = getattr(args, "slot", None)
+    if slot in (1, 2):
+        return slot - 1
+    cfg = getattr(args, "_cfg", None) or {}
+    cfg_slot = cfg.get("defaults", {}).get("slot", 1)
+    return 1 if cfg_slot == 2 else 0
+
+
+def _save_with_args(save: FFTA2Save, args: argparse.Namespace) -> Path:
+    out_path = getattr(args, "output", None) or args.save_file
+    cfg = getattr(args, "_cfg", None) or {}
+    cfg_backup = cfg.get("defaults", {}).get("backup", True)
+    do_backup = bool(cfg_backup) and not getattr(args, "no_backup", False)
+    backup_dir = cfg.get("paths", {}).get("backup_dir")
+    return save.save(out_path, backup=do_backup, backup_dir=backup_dir)
+
+
+def cmd_backup(args: argparse.Namespace) -> int:
+    cfg = getattr(args, "_cfg", None) or {}
+    backup_dir = getattr(args, "backup_dir", None) or cfg.get("paths", {}).get("backup_dir")
+    snap = create_backup_snapshot(args.save_file, backup_dir=backup_dir)
+    print(f"[SUCCESS] Backup snapshot created: {snap}")
+    return 0
+
+
+def cmd_rename(args: argparse.Namespace) -> int:
+    slot_idx = _slot_idx(args)
+    save = FFTA2Save(args.save_file, slot=slot_idx)
+    changes: list[str] = []
+
+    if getattr(args, "name", None) is not None:
+        unit_idx = args.unit - 1
+        old_name = save.get_unit_name(unit_idx)
+        new_name = save.rename_unit(unit_idx, args.name)
+        changes.append(f"Unit {args.unit}: '{old_name}' -> '{new_name}'")
+
+    if getattr(args, "clan_name", None) is not None:
+        old_clan = save.clan_name
+        save.clan_name = args.clan_name
+        changes.append(f"Clan: '{old_clan}' -> '{save.clan_name}'")
+
+    if not changes:
+        print("Error: Specify --name/-n to rename a unit or --clan-name to rename the clan.", file=sys.stderr)
+        return 1
+
+    out_path = _save_with_args(save, args)
+    print(f"[SUCCESS] Slot {slot_idx + 1} renamed ({', '.join(changes)}): {out_path}!")
+    return 0
+
+
+def cmd_inject(args: argparse.Namespace) -> int:
+    slot_idx = _slot_idx(args)
+    save = FFTA2Save(args.save_file, slot=slot_idx)
+    target_unit = getattr(args, "unit", None)
+    unit_idx = target_unit - 1 if target_unit is not None else None
+
+    injected_idx, unit = save.inject_unit(
+        args.job,
+        level=args.level,
+        name=args.name,
+        unit_index=unit_idx,
+        master_abilities=args.master_abilities,
+    )
+
+    issues = [i for i in validate_unit(unit) if i.severity == "ERROR"]
+    if issues:
+        print(f"[ERROR] Injected unit failed validation with {len(issues)} errors:", file=sys.stderr)
+        for iss in issues:
+            print(f"  [{iss.severity}] {iss.field}: {iss.message}", file=sys.stderr)
+        return 1
+
+    out_path = _save_with_args(save, args)
+    u_name = save.get_unit_name(injected_idx)
+    r_name = get_race_name(unit.race_id)
+    j_name = get_job_name(unit.job_id)
+    print(
+        f"[SUCCESS] Injected Unit {injected_idx + 1} [{u_name}] "
+        f"({r_name} {j_name} Lv.{unit.level}) into Slot {slot_idx + 1}: {out_path}!"
+    )
+    return 0
+
+
+def cmd_equip_build(args: argparse.Namespace) -> int:
+    slot_idx = _slot_idx(args)
+    save = FFTA2Save(args.save_file, slot=slot_idx)
+    unit_idx = args.unit - 1
+
+    build = equip_unit_build(
+        save,
+        unit_idx,
+        args.build,
+        master_abilities=args.master_abilities,
+        topup_stats=not args.no_god_stats,
+    )
+    unit = save.get_unit(unit_idx)
+    assert unit is not None
+
+    issues = [i for i in validate_unit(unit) if i.severity == "ERROR"]
+    if issues:
+        print(f"[ERROR] Build '{args.build}' on Unit {args.unit} failed validation:", file=sys.stderr)
+        for iss in issues:
+            print(f"  [{iss.severity}] {iss.field}: {iss.message}", file=sys.stderr)
+        return 1
+
+    out_path = _save_with_args(save, args)
+    u_name = save.get_unit_name(unit_idx)
+    j_name = get_job_name(unit.job_id)
+    w_name = get_item_name(unit.weapon_id)
+    print(
+        f"[SUCCESS] Equipped build '{build.get('key', build['name'])}' on Slot {slot_idx + 1} "
+        f"Unit {args.unit} [{u_name}] (Job={j_name}, Weapon={w_name}): {out_path}!"
+    )
+    return 0
+
+
 def cmd_validate(args: argparse.Namespace) -> int:
-    slot_idx = getattr(args, "slot", 1) - 1
+    slot_idx = _slot_idx(args)
     save = FFTA2Save(args.save_file, slot=slot_idx)
     issues = validate_save(save)
     if not issues:
@@ -69,7 +212,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def cmd_topup_stats(args: argparse.Namespace) -> int:
-    slot_idx = getattr(args, "slot", 1) - 1
+    slot_idx = _slot_idx(args)
     save = FFTA2Save(args.save_file, slot=slot_idx)
     from ffta2_tool.stats import topup_clan_stats
 
@@ -81,8 +224,7 @@ def cmd_topup_stats(args: argparse.Namespace) -> int:
         )
         return 0
 
-    out_path = args.output if args.output else args.save_file
-    save.save(out_path, backup=not args.no_backup)
+    out_path = _save_with_args(save, args)
     print(f"[SUCCESS] 115% God Roll stats applied to {len(results)} clan units in Slot {slot_idx + 1}: {out_path}!")
     for res in results:
         u_idx = res["unit_index"]
@@ -93,18 +235,17 @@ def cmd_topup_stats(args: argparse.Namespace) -> int:
 
 
 def cmd_set_difficulty(args: argparse.Namespace) -> int:
-    slot_idx = getattr(args, "slot", 1) - 1
+    slot_idx = _slot_idx(args)
     save = FFTA2Save(args.save_file, slot=slot_idx)
     target = 1 if args.difficulty == "hard" else 2
     save.difficulty = target
-    out_path = args.output if args.output else args.save_file
-    save.save(out_path, backup=not args.no_backup)
+    out_path = _save_with_args(save, args)
     print(f"[SUCCESS] Slot {slot_idx + 1} difficulty set to {args.difficulty.capitalize()} and signed: {out_path}!")
     return 0
 
 
 def cmd_master_abilities(args: argparse.Namespace) -> int:
-    slot_idx = getattr(args, "slot", 1) - 1
+    slot_idx = _slot_idx(args)
     save = FFTA2Save(args.save_file, slot=slot_idx)
     target_unit = getattr(args, "unit", None)
     unit_idx = target_unit - 1 if target_unit is not None else None
@@ -112,17 +253,20 @@ def cmd_master_abilities(args: argparse.Namespace) -> int:
     count = save.master_all_unit_abilities(unit_idx)
     target_desc = f"Unit {target_unit}" if target_unit is not None else f"all {count} recruited clan units"
 
-    out_path = args.output if args.output else args.save_file
-    save.save(out_path, backup=not args.no_backup)
+    out_path = _save_with_args(save, args)
     print(f"[SUCCESS] Mastered abilities for {target_desc} in Slot {slot_idx + 1}: {out_path}!")
     return 0
 
 
 def cmd_clan(args: argparse.Namespace) -> int:
-    slot_idx = getattr(args, "slot", 1) - 1
+    slot_idx = _slot_idx(args)
     save = FFTA2Save(args.save_file, slot=slot_idx)
 
     actions = []
+    if getattr(args, "clan_name", None) is not None:
+        save.clan_name = args.clan_name
+        actions.append(f"Name='{save.clan_name}'")
+
     if args.all or args.gil is not None:
         val = 99999999 if args.all or args.gil is None else args.gil
         save.gil = val
@@ -142,17 +286,19 @@ def cmd_clan(args: argparse.Namespace) -> int:
         actions.append("all Clan Privileges unlocked")
 
     if not actions:
-        print("No clan options specified. Use --all, --gil, --cp, --privileges, or --talents.", file=sys.stderr)
+        print(
+            "No clan options specified. Use --all, --gil, --cp, --privileges, --talents, or --clan-name.",
+            file=sys.stderr,
+        )
         return 1
 
-    out_path = args.output if args.output else args.save_file
-    save.save(out_path, backup=not args.no_backup)
+    out_path = _save_with_args(save, args)
     print(f"[SUCCESS] Slot {slot_idx + 1} clan updated ({', '.join(actions)}): {out_path}!")
     return 0
 
 
 def cmd_patch_meta_squad(args: argparse.Namespace) -> int:
-    slot_idx = getattr(args, "slot", 1) - 1
+    slot_idx = _slot_idx(args)
     save = FFTA2Save(args.save_file, slot=slot_idx)
 
     # Pre-patch validation gate
@@ -182,8 +328,7 @@ def cmd_patch_meta_squad(args: argparse.Namespace) -> int:
             print(f"  [{iss.severity}] Unit {iss.unit_index + 1} ({iss.field}): {iss.message}")
         return 1
 
-    out_path = args.output if args.output else args.save_file
-    save.save(out_path, backup=not args.no_backup)
+    out_path = _save_with_args(save, args)
     print(f"[SUCCESS] Meta squad successfully applied to Slot {slot_idx + 1} and verified: {out_path}!")
     for build in META_SQUAD_BUILDS:
         job_str = get_job_name(build["job_id"])
@@ -225,24 +370,26 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 
 def cmd_info(args: argparse.Namespace) -> int:
-    slot_idx = getattr(args, "slot", 1) - 1
+    slot_idx = _slot_idx(args)
     save = FFTA2Save(args.save_file, slot=slot_idx)
     print(f"=== FFTA2 Save: {args.save_file} (Slot {slot_idx + 1}) ===")
     print(f"Slot {slot_idx + 1} Leader Name: {save.slot_player_name}")
+    print(f"Clan Name:          {save.clan_name}")
     diff_val = save.difficulty
     diff_str = "Hard" if diff_val == 1 else ("Normal" if diff_val == 2 else f"Unknown ({diff_val})")
     print(f"Difficulty:         {diff_str}")
 
-    is_valid, stored, calc = SlotManager(save.raw_data).verify_slot(save.slot)
+    is_valid, stored, _calc = SlotManager(save.raw_data).verify_slot(save.slot)
     print(f"Checksum: 0x{stored:08X} ({'VALID' if is_valid else 'INVALID'}) at record 0x{save.record_base:04X}")
 
     inv = save.get_inventory()
     print(f"Clan Inventory Items: {len(inv)} unique stacks registered")
 
     print("\n--- Party Roster ---")
-    for i in range(6):
+    for i in range(MAX_UNITS):
         unit = save.get_unit(i)
-        if unit and (unit.character_id != 0 or unit.job_id != 0):
+        if unit and unit.is_recruited:
+            u_name = save.get_unit_name(i)
             job_str = get_job_name(unit.job_id)
             race_str = get_race_name(unit.race_id)
             w_str = get_item_name(unit.weapon_id)
@@ -251,7 +398,7 @@ def cmd_info(args: argparse.Namespace) -> int:
             a_str = get_item_name(unit.armor_id)
             acc_str = get_item_name(unit.accessory_id)
             print(
-                f"Unit {i + 1:2d} ({race_str} {job_str}):\n"
+                f"Unit {i + 1:2d} [{u_name}] ({race_str} {job_str} Lv.{unit.level}):\n"
                 f"  Weapon: {w_str} (0x{unit.weapon_id:04X}) | Shield: {s_str} (0x{unit.shield_id:04X})\n"
                 f"  Head:   {h_str} (0x{unit.helm_id:04X}) | Body:   {a_str} (0x{unit.armor_id:04X})\n"
                 f"  Acc:    {acc_str} (0x{unit.accessory_id:04X})\n"
@@ -260,7 +407,7 @@ def cmd_info(args: argparse.Namespace) -> int:
 
 
 def cmd_inventory(args: argparse.Namespace) -> int:
-    slot_idx = getattr(args, "slot", 1) - 1
+    slot_idx = _slot_idx(args)
     save = FFTA2Save(args.save_file, slot=slot_idx)
     inv = save.get_inventory()
     print(f"=== Slot {slot_idx + 1} Clan Inventory ({len(inv)} items) ===")
@@ -271,7 +418,7 @@ def cmd_inventory(args: argparse.Namespace) -> int:
 
 
 def cmd_set_weapon(args: argparse.Namespace) -> int:
-    slot_idx = getattr(args, "slot", 1) - 1
+    slot_idx = _slot_idx(args)
     save = FFTA2Save(args.save_file, slot=slot_idx)
     unit_idx = args.unit - 1
     unit = save.get_unit(unit_idx)
@@ -293,8 +440,7 @@ def cmd_set_weapon(args: argparse.Namespace) -> int:
         return 1
 
     save.sync_equipped_to_inventory()
-    out_path = args.output if args.output else args.save_file
-    save.save(out_path, backup=not args.no_backup)
+    out_path = _save_with_args(save, args)
 
     old_name = get_item_name(old_weapon)
     new_name = get_item_name(args.item_id)
@@ -328,24 +474,123 @@ def cmd_rom_extract(args: argparse.Namespace) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="FFTA2 Save and ARM Reverse Engineering CLI")
+    parser.add_argument("--config", help="Path to user config.toml")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # verify
     p_verify = subparsers.add_parser("verify", help="Verify save file checksum")
     p_verify.add_argument("save_file", nargs="?", help=SAVE_HELP)
+    p_verify.add_argument("--config", help="Path to user config.toml")
     p_verify.set_defaults(func=cmd_verify)
 
     # info
     p_info = subparsers.add_parser("info", help="Display save metadata, party info, and equipment")
     p_info.add_argument("save_file", nargs="?", help=SAVE_HELP)
     _add_slot_arg(p_info)
+    p_info.add_argument("--config", help="Path to user config.toml")
     p_info.set_defaults(func=cmd_info)
 
     # inventory
     p_inv = subparsers.add_parser("inventory", help="List all items in the clan inventory bag")
     p_inv.add_argument("save_file", nargs="?", help=SAVE_HELP)
     _add_slot_arg(p_inv)
+    p_inv.add_argument("--config", help="Path to user config.toml")
     p_inv.set_defaults(func=cmd_inventory)
+
+    # backup
+    p_bak = subparsers.add_parser("backup", help="Create a standalone timestamped backup snapshot in backup_dir")
+    p_bak.add_argument("save_file", nargs="?", help=SAVE_HELP)
+    p_bak.add_argument("--backup-dir", "-d", help="Override backup directory (default: ~/Documents/FFTA2_Backups)")
+    p_bak.add_argument("--config", help="Path to user config.toml")
+    p_bak.set_defaults(func=cmd_backup)
+
+    # rename
+    p_ren = subparsers.add_parser("rename", help="Rename a clan unit (1..24) or the clan itself")
+    p_ren.add_argument("save_file", nargs="?", help=SAVE_HELP)
+    p_ren.add_argument(
+        "--unit",
+        "-u",
+        type=int,
+        choices=range(1, 25),
+        default=1,
+        help="Unit number to rename (1..24, default: 1)",
+    )
+    p_ren.add_argument(
+        "--name",
+        "-n",
+        help="New unit name (freeform string for Unit 1; ROM name, ID, or 'random' for Units 2..24)",
+    )
+    p_ren.add_argument("--clan-name", help="New custom clan name (up to 15 characters)")
+    _add_common_write_args(p_ren)
+    p_ren.set_defaults(func=cmd_rename)
+
+    # inject
+    p_inj = subparsers.add_parser("inject", help="Inject a new recruit into the clan roster")
+    p_inj.add_argument("save_file", nargs="?", help=SAVE_HELP)
+    p_inj.add_argument(
+        "--job",
+        "-j",
+        required=True,
+        help="Build key (e.g. 'viera', 'nu_mou'), job name (e.g. 'Parivir', 'Nu Mou Sage'), or job ID",
+    )
+    p_inj.add_argument(
+        "--level",
+        "-l",
+        type=int,
+        default=50,
+        help="Recruit level (1..99, default: 50)",
+    )
+    p_inj.add_argument(
+        "--name",
+        "-n",
+        default=None,
+        help="Recruit name (ROM character name, ID, or 'random'; auto-assigned by race if omitted)",
+    )
+    p_inj.add_argument(
+        "--unit",
+        "-u",
+        type=int,
+        choices=range(1, 25),
+        default=None,
+        help="Target unit slot (1..24; uses first empty slot if omitted)",
+    )
+    p_inj.add_argument(
+        "--master-abilities",
+        action="store_true",
+        help="Master all abilities on the injected recruit",
+    )
+    _add_common_write_args(p_inj)
+    p_inj.set_defaults(func=cmd_inject)
+
+    # equip-build
+    p_eqb = subparsers.add_parser("equip-build", help="Equip a single unit with a build from builds.toml")
+    p_eqb.add_argument("save_file", nargs="?", help=SAVE_HELP)
+    p_eqb.add_argument(
+        "--unit",
+        "-u",
+        type=int,
+        choices=range(1, 25),
+        default=1,
+        help="Unit number to equip (1..24, default: 1)",
+    )
+    p_eqb.add_argument(
+        "--build",
+        "-b",
+        required=True,
+        help="Build key or job name from builds.toml (e.g. 'luso', 'nu_mou', 'viera', 'bangaa', 'hume', 'moogle')",
+    )
+    p_eqb.add_argument(
+        "--master-abilities",
+        action="store_true",
+        help="Master all abilities on the unit",
+    )
+    p_eqb.add_argument(
+        "--no-god-stats",
+        action="store_true",
+        help="Skip topping up unit stats to 115%% god-roll maximums",
+    )
+    _add_common_write_args(p_eqb)
+    p_eqb.set_defaults(func=cmd_equip_build)
 
     # set-weapon
     p_set = subparsers.add_parser("set-weapon", help="Change unit's equipped weapon and re-sign")
@@ -359,9 +604,7 @@ def main() -> None:
         help="Unit number to equip (1..24, default: 1)",
     )
     p_set.add_argument("--item-id", type=int, required=True, help="Item ID to equip")
-    _add_slot_arg(p_set)
-    p_set.add_argument("--output", "-o", help="Output save path (overwrites if omitted)")
-    p_set.add_argument("--no-backup", action="store_true", help="Skip the pre-write timestamped backup snapshot")
+    _add_common_write_args(p_set)
     p_set.set_defaults(func=cmd_set_weapon)
 
     # rom-info
@@ -379,7 +622,6 @@ def main() -> None:
     # patch-meta-squad
     p_patch = subparsers.add_parser("patch-meta-squad", help="Apply verified meta squad builds to save")
     p_patch.add_argument("save_file", nargs="?", help=SAVE_HELP)
-    p_patch.add_argument("--output", "-o", help="Output save path (overwrites if omitted)")
     p_patch.add_argument(
         "--count", "-c", type=int, default=50, help="Item quantity to inject into clan bag (default: 50)"
     )
@@ -401,17 +643,14 @@ def main() -> None:
         choices=["hard", "normal"],
         help="Override difficulty setting (hard or normal; keeps current if omitted)",
     )
-    _add_slot_arg(p_patch)
-    p_patch.add_argument("--no-backup", action="store_true", help="Skip the pre-write timestamped backup snapshot")
+    _add_common_write_args(p_patch)
     p_patch.set_defaults(func=cmd_patch_meta_squad)
 
     # topup-stats
     p_topup = subparsers.add_parser("topup-stats", help="Top up clan units to 115%% god roll stats (non-destructive)")
     p_topup.add_argument("save_file", nargs="?", help=SAVE_HELP)
     p_topup.add_argument("--units", "-u", type=int, default=6, help="Number of clan unit slots to top up (default: 6)")
-    _add_slot_arg(p_topup)
-    p_topup.add_argument("--output", "-o", help="Output save path (overwrites if omitted)")
-    p_topup.add_argument("--no-backup", action="store_true", help="Skip the pre-write timestamped backup snapshot")
+    _add_common_write_args(p_topup)
     p_topup.set_defaults(func=cmd_topup_stats)
 
     # set-difficulty
@@ -424,15 +663,14 @@ def main() -> None:
         required=True,
         help="Difficulty level to set (hard or normal)",
     )
-    _add_slot_arg(p_diff)
-    p_diff.add_argument("--output", "-o", help="Output save path (overwrites if omitted)")
-    p_diff.add_argument("--no-backup", action="store_true", help="Skip the pre-write timestamped backup snapshot")
+    _add_common_write_args(p_diff)
     p_diff.set_defaults(func=cmd_set_difficulty)
 
     # validate
     p_val = subparsers.add_parser("validate", help="Validate clan units against NDS UI crash conditions")
     p_val.add_argument("save_file", nargs="?", help=SAVE_HELP)
     _add_slot_arg(p_val)
+    p_val.add_argument("--config", help="Path to user config.toml")
     p_val.set_defaults(func=cmd_validate)
 
     # master-abilities
@@ -446,9 +684,7 @@ def main() -> None:
         default=None,
         help="Specific unit index to master (1..24; masters all recruited units if omitted)",
     )
-    _add_slot_arg(p_mab)
-    p_mab.add_argument("--output", "-o", help="Output save path (overwrites if omitted)")
-    p_mab.add_argument("--no-backup", action="store_true", help="Skip the pre-write timestamped backup snapshot")
+    _add_common_write_args(p_mab)
     p_mab.set_defaults(func=cmd_master_abilities)
 
     # clan
@@ -489,16 +725,17 @@ def main() -> None:
         action="store_true",
         help="Set all four Clan Talents (Negotiation, Aptitude, Teamwork, Adaptability) to 99",
     )
-    _add_slot_arg(p_clan)
-    p_clan.add_argument("--output", "-o", help="Output save path (overwrites if omitted)")
-    p_clan.add_argument("--no-backup", action="store_true", help="Skip the pre-write timestamped backup snapshot")
+    p_clan.add_argument("--clan-name", help="Set custom clan name (up to 15 characters)")
+    _add_common_write_args(p_clan)
     p_clan.set_defaults(func=cmd_clan)
 
     args = parser.parse_args()
+    cfg = load_config(getattr(args, "config", None))
+    args._cfg = cfg
 
     # Auto-detect the save file when a command needs one and none was supplied
     if args.command in SAVE_COMMANDS:
-        args.save_file = resolve_save_file(args.save_file)
+        args.save_file = resolve_save_file(args.save_file, cfg=cfg)
         if args.save_file is None:
             print(
                 "Error: No save file specified and none found in ~/Documents/FFTA2_Backups, "

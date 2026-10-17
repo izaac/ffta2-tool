@@ -6,15 +6,18 @@ Also optionally injects full sets of ability-learning equipment into the clan ba
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
-from ffta2_tool.config import load_builds
+from ffta2_tool.config import load_builds, load_builds_by_key
+from ffta2_tool.mappings import get_job_name, get_job_race_id
 from ffta2_tool.save import FFTA2Save
 
 # Built-in fallback used when builds.toml is missing or unreadable
 DEFAULT_META_SQUAD_BUILDS: list[dict[str, Any]] = [
     # Slot 0: Luso (Hume) - Parivir / Paladin
     {
+        "key": "luso",
         "name": "Luso",
         "slot": 0,
         "job_id": 0x08,  # Parivir
@@ -30,6 +33,7 @@ DEFAULT_META_SQUAD_BUILDS: list[dict[str, Any]] = [
     },
     # Slot 1: Nu Mou - Sage / Alchemist
     {
+        "key": "nu_mou",
         "name": "Nu Mou",
         "slot": 1,
         "job_id": 0x1F,  # Sage
@@ -45,6 +49,7 @@ DEFAULT_META_SQUAD_BUILDS: list[dict[str, Any]] = [
     },
     # Slot 2: Viera - Red Mage / Summoner
     {
+        "key": "viera",
         "name": "Viera",
         "slot": 2,
         "job_id": 0x27,  # Red Mage
@@ -60,6 +65,7 @@ DEFAULT_META_SQUAD_BUILDS: list[dict[str, Any]] = [
     },
     # Slot 3: Bangaa - Cannoneer / Defender
     {
+        "key": "bangaa",
         "name": "Bangaa",
         "slot": 3,
         "job_id": 0x16,  # Cannoneer
@@ -75,6 +81,7 @@ DEFAULT_META_SQUAD_BUILDS: list[dict[str, Any]] = [
     },
     # Slot 4: Hume (Generic) - Hunter / Seer
     {
+        "key": "hume",
         "name": "Hume",
         "slot": 4,
         "job_id": 0x0C,  # Hunter
@@ -90,6 +97,7 @@ DEFAULT_META_SQUAD_BUILDS: list[dict[str, Any]] = [
     },
     # Slot 5: Moogle - Fusilier / Juggler
     {
+        "key": "moogle",
         "name": "Moogle",
         "slot": 5,
         "job_id": 0x30,  # Fusilier
@@ -203,6 +211,73 @@ META_INVENTORY_ITEMS: list[int] = [
     0x0187,
     0x0189,  # Accessories
 ]
+
+
+def resolve_build(key_or_name: str, builds_path: str | Path | None = None) -> dict[str, Any] | None:
+    """Resolve a build dictionary from builds.toml by TOML key, build name, or primary job name."""
+    keyed = load_builds_by_key(builds_path)
+    if not keyed:
+        keyed = {str(b.get("key", b["name"])).lower().replace(" ", "_"): b for b in DEFAULT_META_SQUAD_BUILDS}
+
+    norm = key_or_name.strip().lower().replace("-", "_")
+    if norm in keyed:
+        return keyed[norm]
+
+    norm_space = norm.replace("_", " ")
+    for b in keyed.values():
+        if str(b.get("name", "")).lower() == norm_space:
+            return b
+        if str(b.get("job", "")).lower() == norm_space:
+            return b
+        if get_job_name(int(b["job_id"])).lower() == norm_space:
+            return b
+    return None
+
+
+def equip_unit_build(
+    save: FFTA2Save,
+    unit_index: int,
+    build_key: str,
+    master_abilities: bool = False,
+    topup_stats: bool = True,
+    builds_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Equip a single unit (0..23) with a named build from builds.toml."""
+    unit = save.get_unit(unit_index)
+    if unit is None:
+        raise ValueError(f"Invalid unit index: {unit_index} (must be 0..23)")
+    if not unit.is_recruited:
+        raise ValueError(f"Unit slot {unit_index + 1} is empty (no recruited clan member)")
+
+    build = resolve_build(build_key, builds_path=builds_path)
+    if build is None:
+        available = ", ".join(b.get("key", b["name"]).lower() for b in META_SQUAD_BUILDS)
+        raise ValueError(f"Unknown build '{build_key}'. Available builds: {available}")
+
+    job_id = int(build["job_id"])
+    unit.race_id = get_job_race_id(job_id)
+    unit.job_id = job_id
+    unit.primary_ability_set = int(build["primary_set"])
+    unit.secondary_ability_set = int(build["secondary_set"])
+    unit.weapon_id = int(build["weapon_id"])
+    unit.shield_id = int(build["shield_id"])
+    unit.helm_id = int(build["helm_id"])
+    unit.armor_id = int(build["armor_id"])
+    unit.accessory_id = int(build["accessory_id"])
+    if build.get("r_ability"):
+        unit.r_ability = int(build["r_ability"])
+    if build.get("p_ability"):
+        unit.p_ability = int(build["p_ability"])
+    if master_abilities:
+        unit.master_all_abilities()
+
+    if topup_stats:
+        from ffta2_tool.stats import topup_unit_stats
+
+        topup_unit_stats(unit)
+
+    save.sync_equipped_to_inventory()
+    return build
 
 
 def apply_meta_squad(
