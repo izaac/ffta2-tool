@@ -39,6 +39,7 @@ def get_sample_save_path() -> Path | None:
     candidates = [
         Path.home() / "Documents" / "FFTA2_Backups" / "071 Final Fantasy Tactics A2.sav.orig",
         Path.home() / "Documents" / "FFTA2_Backups" / "071 Final Fantasy Tactics A2.sav",
+        Path(__file__).resolve().parent.parent / "examples" / "FFTA2_Meta_Squad_Hard.sav",
     ]
     for p in candidates:
         if p.exists():

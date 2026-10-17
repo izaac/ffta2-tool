@@ -6,4 +6,5 @@ dist/
 build/
 .venv/
 *.local.md
+examples/melonds/output/
 

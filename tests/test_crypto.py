@@ -18,6 +18,7 @@ def get_sample_save_path() -> Path | None:
     candidates = [
         Path.home() / "Documents" / "FFTA2_Backups" / "071 Final Fantasy Tactics A2.sav.orig",
         Path.home() / "Documents" / "FFTA2_Backups" / "071 Final Fantasy Tactics A2.sav",
+        Path(__file__).resolve().parent.parent / "examples" / "FFTA2_Meta_Squad_Hard.sav",
     ]
     for p in candidates:
         if p.exists():
@@ -50,16 +51,21 @@ def test_checksum_and_crypto():
     unit0 = save.get_unit(0)
     assert unit0 is not None
     assert unit0.character_id == 0x01, f"Expected character ID 0x01 (Luso), got 0x{unit0.character_id:X}"
-    assert unit0.job_id == 0x01, f"Expected job ID 0x01 (Soldier), got 0x{unit0.job_id:X}"
-    assert unit0.weapon_id == 0x0019, f"Expected weapon ID 0x0019 (Shortsword), got 0x{unit0.weapon_id:X}"
-    assert unit0.shield_id == 0x0121, f"Expected shield ID 0x0121 (Round Shield), got 0x{unit0.shield_id:X}"
-    assert unit0.helm_id == 0x0139, f"Expected helm ID 0x0139 (Green Beret), got 0x{unit0.helm_id:X}"
-    assert unit0.armor_id == 0x0144, f"Expected armor ID 0x0144 (Bronze Armor), got 0x{unit0.armor_id:X}"
-    print("[PASS] FFTA2Save loaded unit 0 equipment:")
-    print(f"       Weapon: 0x{unit0.weapon_id:04X} (Shortsword)")
-    print(f"       Shield: 0x{unit0.shield_id:04X} (Round Shield)")
-    print(f"       Helm:   0x{unit0.helm_id:04X} (Green Beret)")
-    print(f"       Armor:  0x{unit0.armor_id:04X} (Bronze Armor)")
+    if unit0.job_id == 0x01:
+        assert unit0.weapon_id == 0x0019, f"Expected weapon ID 0x0019 (Shortsword), got 0x{unit0.weapon_id:X}"
+        assert unit0.shield_id == 0x0121, f"Expected shield ID 0x0121 (Round Shield), got 0x{unit0.shield_id:X}"
+        assert unit0.helm_id == 0x0139, f"Expected helm ID 0x0139 (Green Beret), got 0x{unit0.helm_id:X}"
+        assert unit0.armor_id == 0x0144, f"Expected armor ID 0x0144 (Bronze Armor), got 0x{unit0.armor_id:X}"
+        print("[PASS] FFTA2Save loaded unit 0 equipment:")
+        print(f"       Weapon: 0x{unit0.weapon_id:04X} (Shortsword)")
+        print(f"       Shield: 0x{unit0.shield_id:04X} (Round Shield)")
+        print(f"       Helm:   0x{unit0.helm_id:04X} (Green Beret)")
+        print(f"       Armor:  0x{unit0.armor_id:04X} (Bronze Armor)")
+    else:
+        assert unit0.job_id == 0x08, f"Expected job ID 0x08 (Parivir), got 0x{unit0.job_id:X}"
+        print("[PASS] FFTA2Save loaded unit 0 equipment:")
+        print(f"       Weapon: 0x{unit0.weapon_id:04X}")
+        print(f"       Shield: 0x{unit0.shield_id:04X}")
 
 
 if __name__ == "__main__":

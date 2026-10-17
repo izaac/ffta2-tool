@@ -55,6 +55,24 @@ pyfmt:
         python3 -m ruff format . && python3 -m ruff check --fix . ; \
     fi
 
-# Validate stable and active save files
-validate:
-    PYTHONPATH=. python3 -m ffta2_tool.cli validate "$HOME/Documents/FFTA2_Backups/071 Final Fantasy Tactics A2 - after first pub - stable.sav"
+# Validate a save file (checks custom target, backup dir, or example save)
+validate save="":
+    #!/usr/bin/env bash
+    target="{{save}}"
+    if [ -z "$target" ]; then
+        if [ -f "$HOME/Documents/FFTA2_Backups/071 Final Fantasy Tactics A2 - after first pub - stable.sav" ]; then
+            target="$HOME/Documents/FFTA2_Backups/071 Final Fantasy Tactics A2 - after first pub - stable.sav"
+        elif [ -f "examples/FFTA2_Meta_Squad_Hard.sav" ]; then
+            target="examples/FFTA2_Meta_Squad_Hard.sav"
+        fi
+    fi
+    if [ -n "$target" ] && [ -f "$target" ]; then
+        PYTHONPATH=. python3 -m ffta2_tool.cli validate "$target"
+    else
+        echo "No save file found. Specify one via: just validate <path>"
+        exit 1
+    fi
+
+# Run headless melonDS automated test runner
+melonds-test rom save="examples/FFTA2_Meta_Squad_Hard.sav" out="examples/melonds/output":
+    ./examples/melonds/run_headless_test.sh "{{rom}}" "{{save}}" "{{out}}"

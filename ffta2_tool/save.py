@@ -131,13 +131,21 @@ def auto_detect_save(search_paths: list[str] | None = None) -> str | None:
                 candidates.extend(glob.glob(f"{letter}:\\Saves\\nds\\{SAVE_NAME_GLOB}"))
                 candidates.extend(glob.glob(f"{letter}:\\Saves\\NDS\\{SAVE_NAME_GLOB}"))
 
-        # Local backup directory, then current directory fallback
+        # Local backup directory, repo examples directory, and current directory fallbacks
         backup_dir = Path.home() / "Documents" / "FFTA2_Backups"
         try:
             if backup_dir.is_dir():
                 candidates.extend(glob.glob(str(backup_dir / "*.sav")))
         except OSError:
             pass
+
+        repo_examples = Path(__file__).resolve().parent.parent / "examples"
+        try:
+            if repo_examples.is_dir():
+                candidates.extend(glob.glob(str(repo_examples / "*.sav")))
+        except OSError:
+            pass
+
         candidates.extend(glob.glob("*.sav"))
 
     valid = [p for p in candidates if os.path.isfile(p) and os.path.getsize(p) >= MIN_SAVE_SIZE]

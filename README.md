@@ -33,3 +33,4 @@ python3 -m ffta2_tool.cli rom-extract path/to/game.nds -o arm9.bin
 
 - [Save Architecture Reference](docs/save_architecture.md): Complete technical breakdown of save layout, cipher algorithms, and ARM9 disassembly offsets.
 - [Meta Squad Strategy Specification](docs/meta_squad_strategy.md): Verified builds, legal proficiencies, and endgame gear.
+- [MelonDS Headless Debugging](docs/melonds_headless_debugging.md): Automated emulation testing, headless Xvfb runner, and load screen verification.
