@@ -64,7 +64,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
         return 0
     print(f"[FAIL] Found {len(issues)} stability issues in Slot {slot_idx + 1}:")
     for iss in issues:
-        print(f"  [{iss.severity}] Unit {iss.unit_index} ({iss.field}): {iss.message}")
+        print(f"  [{iss.severity}] Unit {iss.unit_index + 1} ({iss.field}): {iss.message}")
     return 1
 
 
@@ -88,7 +88,7 @@ def cmd_topup_stats(args: argparse.Namespace) -> int:
         u_idx = res["unit_index"]
         job_str = get_job_name(res["job_id"])
         summary = ", ".join(f"{stat}: {old}->{new}" for stat, (old, new) in res["changes"].items())
-        print(f"  Unit {u_idx} ({job_str}): {summary}")
+        print(f"  Unit {u_idx + 1} ({job_str}): {summary}")
     return 0
 
 
@@ -160,7 +160,7 @@ def cmd_patch_meta_squad(args: argparse.Namespace) -> int:
     if pre_issues:
         print(f"[WARNING] Save has {len(pre_issues)} pre-existing errors before patching:")
         for iss in pre_issues:
-            print(f"  [{iss.severity}] Unit {iss.unit_index} ({iss.field}): {iss.message}")
+            print(f"  [{iss.severity}] Unit {iss.unit_index + 1} ({iss.field}): {iss.message}")
 
     if getattr(args, "difficulty", None):
         save.difficulty = 1 if args.difficulty == "hard" else 2
@@ -179,7 +179,7 @@ def cmd_patch_meta_squad(args: argparse.Namespace) -> int:
     if post_issues:
         print(f"[ERROR] Post-patch validation failed with {len(post_issues)} errors! Aborting save.")
         for iss in post_issues:
-            print(f"  [{iss.severity}] Unit {iss.unit_index} ({iss.field}): {iss.message}")
+            print(f"  [{iss.severity}] Unit {iss.unit_index + 1} ({iss.field}): {iss.message}")
         return 1
 
     out_path = args.output if args.output else args.save_file
@@ -189,7 +189,7 @@ def cmd_patch_meta_squad(args: argparse.Namespace) -> int:
         job_str = get_job_name(build["job_id"])
         w_str = get_item_name(build["weapon_id"])
         print(
-            f"  Unit {build['slot']} ({build['name']}): "
+            f"  Unit {build['slot'] + 1} ({build['name']}): "
             f"Job={job_str} (0x{build['job_id']:02X}), Weapon={w_str} (0x{build['weapon_id']:04X})"
         )
 
@@ -251,7 +251,7 @@ def cmd_info(args: argparse.Namespace) -> int:
             a_str = get_item_name(unit.armor_id)
             acc_str = get_item_name(unit.accessory_id)
             print(
-                f"Unit {i:2d} ({race_str} {job_str}):\n"
+                f"Unit {i + 1:2d} ({race_str} {job_str}):\n"
                 f"  Weapon: {w_str} (0x{unit.weapon_id:04X}) | Shield: {s_str} (0x{unit.shield_id:04X})\n"
                 f"  Head:   {h_str} (0x{unit.helm_id:04X}) | Body:   {a_str} (0x{unit.armor_id:04X})\n"
                 f"  Acc:    {acc_str} (0x{unit.accessory_id:04X})\n"
@@ -273,10 +273,13 @@ def cmd_inventory(args: argparse.Namespace) -> int:
 def cmd_set_weapon(args: argparse.Namespace) -> int:
     slot_idx = getattr(args, "slot", 1) - 1
     save = FFTA2Save(args.save_file, slot=slot_idx)
-    unit = save.get_unit(args.unit)
+    unit_idx = args.unit - 1
+    unit = save.get_unit(unit_idx)
     if not unit:
-        print(f"Error: Invalid unit index {args.unit}")
+        print(f"Error: Invalid unit number {args.unit} (must be 1..24)", file=sys.stderr)
         return 1
+    if not unit.is_recruited:
+        raise ValueError(f"Unit slot {args.unit} is empty (no recruited clan member)")
 
     old_weapon = unit.weapon_id
     unit.weapon_id = args.item_id
@@ -347,7 +350,14 @@ def main() -> None:
     # set-weapon
     p_set = subparsers.add_parser("set-weapon", help="Change unit's equipped weapon and re-sign")
     p_set.add_argument("save_file", nargs="?", help=SAVE_HELP)
-    p_set.add_argument("--unit", type=int, default=0, help="Unit index (default: 0)")
+    p_set.add_argument(
+        "--unit",
+        "-u",
+        type=int,
+        choices=range(1, 25),
+        default=1,
+        help="Unit number to equip (1..24, default: 1)",
+    )
     p_set.add_argument("--item-id", type=int, required=True, help="Item ID to equip")
     _add_slot_arg(p_set)
     p_set.add_argument("--output", "-o", help="Output save path (overwrites if omitted)")

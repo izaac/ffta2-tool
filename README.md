@@ -19,8 +19,8 @@ python3 -m ffta2_tool.cli verify path/to/save.sav
 # Inspect save metadata and party roster
 python3 -m ffta2_tool.cli info path/to/save.sav
 
-# Equip weapon on a unit (e.g. Unit 0 with Chirijiraden, ID 24)
-python3 -m ffta2_tool.cli set-weapon path/to/save.sav --unit 0 --item-id 24
+# Equip weapon on a unit (e.g. Unit 1 with Chirijiraden, ID 24)
+python3 -m ffta2_tool.cli set-weapon path/to/save.sav --unit 1 --item-id 24
 
 # Inspect ROM headers
 python3 -m ffta2_tool.cli rom-info path/to/game.nds
