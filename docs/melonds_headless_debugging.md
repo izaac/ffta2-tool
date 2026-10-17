@@ -114,6 +114,30 @@ XDOTOOL_BIN=/usr/bin/xdotool \
 ./examples/melonds/run_headless_test.sh path/to/game.nds
 ```
 
+The ROM/save/output paths can also be supplied via environment variables instead of
+positional arguments (`ROM_PATH`, `SAV_PATH`, `OUTPUT_DIR`), which is convenient for CI:
+
+```bash
+ROM_PATH=/data/roms/ffta2.nds \
+SAV_PATH=/data/saves/patched.sav \
+OUTPUT_DIR=/tmp/ffta2-shots \
+./examples/melonds/run_headless_test.sh
+```
+
+The default save (`examples/FFTA2_Meta_Squad_Hard.sav`) and default output directory
+(`examples/melonds/output`) are resolved relative to the repository, so a fresh clone
+works on any machine once a ROM path is supplied. The ROM itself is never committed
+(bring your own dump); the 512 KiB example save is committed and needs no setup.
+
+### Troubleshooting
+
+- **Stale X11 display locks**: hard-killed Xvfb sessions can leave `/tmp/.X*-lock` files
+  behind. The runner skips occupied display numbers and picks the first free one, and it
+  shuts Xvfb down gracefully (SIGTERM first) so it no longer leaves locks of its own.
+- **Paths with spaces**: when the runner auto re-execs inside `nix-shell`, arguments are
+  passed through quoted environment variables, so ROM/save paths like
+  `/run/media/.../071 Final Fantasy Tactics A2.nds` survive intact.
+
 ---
 
 ## 5. Interpreting Test Artifacts

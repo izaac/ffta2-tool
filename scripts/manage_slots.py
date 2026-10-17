@@ -82,9 +82,11 @@ def main() -> None:
             valid, stored, calc = sm.verify_slot(s)
             status = "VALID" if valid else "INVALID"
             print(f"[{status}] Slot {s + 1}:")
-            print(f"       Leader:       {prev['leader_name']} (Job {prev['leader_job']})")
+            print(f"       Leader:       {prev['leader_name']}")
             print(f"       Difficulty:   {prev.get('difficulty_label', 'Unknown')}")
             print(f"       Party Size:   {prev['member_count']} units")
+            print(f"       Quests:       {prev['cleared_quests']}")
+            print(f"       Play Time:    {prev['play_time_formatted']}")
             print(f"       Active Flag:  {prev['active']}")
             print(f"       Checksum:     Stored=0x{stored:08X}, Calc=0x{calc:08X}")
         is_mirrored = sm.raw[:0x40000] == sm.raw[0x40000:0x80000]

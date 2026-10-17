@@ -138,8 +138,11 @@ class SlotManager:
         cleared_quests = struct.unpack_from("<I", entry, 12)[0]
         name = decode_ffta2_string(entry[16:36])
 
-        # Reverse-engineered preview metadata fields (proved via melonDS test rig):
+        # Reverse-engineered preview metadata fields (proved via melonDS test rig,
+        # cross-checked against load-screen display: "Lv", "Clan Members", "Quests Completed"):
+        # +0x0C: quests completed (uint32) -- NOT leader job; do not overwrite
         # byte 36: difficulty (1 = Hard, 0 or 2 = Normal)
+        # byte 37: subflag (always 0 in every observed save)
         # byte 38: clan title rank (e.g. 4)
         # byte 39: leader level (e.g. 4)
         # bytes 40..41: play time hours (uint16)
@@ -167,15 +170,11 @@ class SlotManager:
             "magic_valid": magic == METADATA_MAGIC,
             "leader_name": name,
             "leader_level": leader_level,
-            "leader_job": struct.unpack_from("<I", entry, 12)[0],
             "member_count": member_count,
-            "location_id": struct.unpack_from("<H", entry, 36)[0],
-            "clan_title": struct.unpack_from("<H", entry, 38)[0],
             "clan_title_rank": clan_title_rank,
             "difficulty": difficulty,
             "difficulty_label": difficulty_label,
             "cleared_quests": cleared_quests,
-            "play_time": struct.unpack_from("<H", entry, 42)[0],
             "play_time_hours": hours,
             "play_time_minutes": mins,
             "play_time_seconds": secs,
@@ -199,7 +198,6 @@ class SlotManager:
         _, _, payload = self.get_slot_payload(slot_idx)
         diff_val = payload[0x3558 - 0x01C0] if len(payload) > 0x3558 - 0x01C0 else 1
         u0_off = 0x0238 - 0x01C0  # Unit 0 relative to payload start
-        u0_job = payload[u0_off + 0x0E]
         name_off = 0x01EC - 0x01C0
         u0_name_raw = payload[name_off : name_off + 16]
 
@@ -218,7 +216,7 @@ class SlotManager:
                 pad = 0xFF00
 
             struct.pack_into(
-                "<IBBHII",
+                "<IBBHI",
                 self.raw,
                 entry_off,
                 METADATA_MAGIC,
@@ -226,14 +224,13 @@ class SlotManager:
                 slot_id,
                 pad,
                 unit_count,
-                u0_job,
             )
             # Leader name (20 bytes, null padded)
             self.raw[entry_off + 16 : entry_off + 36] = (u0_name_raw + b"\x00" * 20)[:20]
 
-            # Byte 36: difficulty (1 = Hard, 0 = Normal)
-            diff_byte = 1 if diff_val == 1 else 0
-            self.raw[entry_off + 36] = diff_byte
+            # Byte 36: difficulty (1 = Hard, 0 = Normal). All other preview bytes
+            # (quests, subflag, rank, level, play time) keep their existing values.
+            self.raw[entry_off + 36] = 1 if diff_val == 1 else 0
 
             meta_chk = calculate_metadata_checksum(self.raw[copy_base : copy_base + METADATA_COPY_SIZE])
             struct.pack_into("<I", self.raw, copy_base, meta_chk)
@@ -280,8 +277,6 @@ class SlotManager:
         self.raw[base + 8 : base + 8 + SLOT_PAYLOAD_SIZE] = enc_payload
 
         # 4. Extract preview info from plaintext payload
-        u0_off = 0x0238 - 0x01C0  # relative to payload
-        u0_job = plaintext_payload[u0_off + 0x0E] if len(plaintext_payload) > u0_off + 0x0E else 1
         name_off = 0x01EC - 0x01C0
         u0_name_raw = plaintext_payload[name_off : name_off + 16]
 
@@ -304,20 +299,24 @@ class SlotManager:
         # 5. Update preview entry in metadata copy 1 and copy 2
         for copy_base in METADATA_OFFSETS:
             entry_off = self._find_entry_offset(slot_idx, copy_base)
-            existing_time_bytes = bytes(self.raw[entry_off + 40 : entry_off + 44])
-            existing_level = self.raw[entry_off + 39] if self.raw[entry_off + 39] != 0 else 1
-            existing_rank = self.raw[entry_off + 38] if self.raw[entry_off + 38] != 0 else 4
+            existing_magic = struct.unpack_from("<I", self.raw, entry_off)[0]
+            existing_pad = (
+                struct.unpack_from("<H", self.raw, entry_off + 6)[0] if existing_magic == METADATA_MAGIC else 0xFF00
+            )
 
+            # Only the identity fields (+0x00..+0x0B), leader name, and the difficulty
+            # badge (+0x24) are rewritten. Quests (+0x0C), subflag (+0x25), clan title
+            # rank (+0x26), leader level (+0x27), and play time (+0x28..+0x2B) keep
+            # their game-written values so the load-screen preview is not clobbered.
             struct.pack_into(
-                "<IBBHII",
+                "<IBBHI",
                 self.raw,
                 entry_off,
                 METADATA_MAGIC,
                 1 if active else 0,
                 slot_idx,
-                0xFF00,
+                existing_pad,
                 unit_count,
-                u0_job,
             )
             # Leader name (20 bytes, null padded)
             self.raw[entry_off + 16 : entry_off + 36] = b"\x00" * 20
@@ -325,11 +324,6 @@ class SlotManager:
 
             # Byte 36: difficulty (1 = Hard, 0 = Normal)
             self.raw[entry_off + 36] = diff_byte
-            self.raw[entry_off + 37] = 0
-            self.raw[entry_off + 38] = existing_rank
-            self.raw[entry_off + 39] = existing_level
-            # Preserve hours, minutes, seconds (bytes 40..43)
-            self.raw[entry_off + 40 : entry_off + 44] = existing_time_bytes
 
             # Recompute metadata copy checksum
             meta_chk = calculate_metadata_checksum(self.raw[copy_base : copy_base + METADATA_COPY_SIZE])
@@ -380,14 +374,11 @@ class SlotManager:
         struct.pack_into("<IHH", self.raw, base, new_chk, 0x0002, seed)
         self.raw[base + 8 : base + 8 + SLOT_PAYLOAD_SIZE] = enc_payload
 
-        # Update preview byte 36: 1 for Hard, 0 for Normal
+        # Update preview byte 36 (badge) on the slot's descriptor in both copies
         diff_byte = 1 if difficulty == 1 else 0
         for copy_base in METADATA_OFFSETS:
-            for i in range(4):
-                off = copy_base + PREVIEW_OFFSET_BASE + i * ENTRY_SIZE
-                magic, active, s_id = struct.unpack_from("<IBB", self.raw, off)
-                if magic == METADATA_MAGIC and (s_id == slot_idx or i == slot_idx):
-                    self.raw[off + 36] = diff_byte
+            off = self._find_entry_offset(slot_idx, copy_base)
+            self.raw[off + 36] = diff_byte
             meta_chk = calculate_metadata_checksum(self.raw[copy_base : copy_base + METADATA_COPY_SIZE])
             struct.pack_into("<I", self.raw, copy_base, meta_chk)
 

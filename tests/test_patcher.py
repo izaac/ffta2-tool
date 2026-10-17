@@ -261,12 +261,12 @@ def test_meta_squad_patcher():
         sm = SlotManager(bytearray(patched_raw))
         assert sm.verify_slot(0)[0], "Slot 0 checksum invalid after save"
         preview = sm.get_slot_preview(0)
-        assert preview["leader_job"] == 0x08, f"Stale preview job 0x{preview['leader_job']:02X}"
         assert preview["leader_name"] == "Luso"
         assert preview["member_count"] == 6
-        assert preview["play_time"] == original_preview["play_time"]
-        assert preview["location_id"] == original_preview["location_id"]
-        assert preview["clan_title"] == original_preview["clan_title"]
+        assert preview["cleared_quests"] == original_preview["cleared_quests"]
+        assert preview["clan_title_rank"] == original_preview["clan_title_rank"]
+        assert preview["leader_level"] == original_preview["leader_level"]
+        assert preview["play_time_formatted"] == original_preview["play_time_formatted"]
         for copy_base in (0x0000, 0x00DC):
             stored = struct.unpack_from("<I", sm.raw, copy_base)[0]
             calculated = calculate_metadata_checksum(sm.raw[copy_base : copy_base + 0xDC])
@@ -375,10 +375,10 @@ def test_difficulty_roundtrip():
         preview = sm.get_slot_preview(0)
         assert preview["difficulty"] == 1
         assert preview["difficulty_label"] == "Hard"
-        assert sm.raw[0x0000 + 0x2C + 36] == 1, "Preview byte 36 must be 1 for Hard mode badge"
-        assert preview["play_time"] == original_preview["play_time"]
-        assert preview["location_id"] & 0xFF == 1
-        assert preview["clan_title"] & 0xFF == original_preview["clan_title"] & 0xFF
+        entry_off = sm._find_entry_offset(0, 0x0000)
+        assert sm.raw[entry_off + 36] == 1, "Preview byte 36 must be 1 for Hard mode badge"
+        assert preview["play_time_formatted"] == original_preview["play_time_formatted"]
+        assert preview["cleared_quests"] == original_preview["cleared_quests"]
         for copy_base in (0x0000, 0x00DC):
             stored = struct.unpack_from("<I", sm.raw, copy_base)[0]
             calculated = calculate_metadata_checksum(sm.raw[copy_base : copy_base + 0xDC])
@@ -388,10 +388,10 @@ def test_difficulty_roundtrip():
         sm.set_slot_difficulty(0, 2)
         assert sm.get_slot_preview(0)["difficulty"] == 2
         assert sm.get_slot_preview(0)["difficulty_label"] == "Normal"
-        assert sm.raw[0x0000 + 0x2C + 36] == 0
+        assert sm.raw[sm._find_entry_offset(0, 0x0000) + 36] == 0
         sm.set_slot_difficulty(0, 1)
         assert sm.get_slot_preview(0)["difficulty"] == 1
-        assert sm.raw[0x0000 + 0x2C + 36] == 1
+        assert sm.raw[sm._find_entry_offset(0, 0x0000) + 36] == 1
         print("[PASS] Difficulty flag roundtrip and Hard preview verified.")
     finally:
         if tmp_path.exists():

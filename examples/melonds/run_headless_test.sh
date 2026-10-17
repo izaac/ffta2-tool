@@ -17,12 +17,15 @@ XVFB="${XVFB_BIN:-$(command -v Xvfb 2>/dev/null || true)}"
 MAGICK="${MAGICK_BIN:-$(command -v magick 2>/dev/null || command -v convert 2>/dev/null || true)}"
 IMPORT="${IMPORT_BIN:-$(command -v import 2>/dev/null || true)}"
 
-# If on NixOS and tools are missing from PATH, auto re-exec within nix-shell
+# If on NixOS and tools are missing from PATH, auto re-exec within nix-shell.
+# Arguments are passed via environment variables (printf %q quoted) so paths
+# containing spaces (e.g. SD-card ROM names) survive the nix-shell --run round-trip.
 if { [ -z "${XDOTOOL}" ] || [ -z "${XVFB}" ]; } && command -v nix-shell >/dev/null 2>&1; then
     if [ "${NIX_SHELL_ACTIVE:-0}" -ne 1 ]; then
         echo "[*] Missing Xvfb/xdotool in PATH. Re-running inside nix-shell environment..."
         export NIX_SHELL_ACTIVE=1
-        exec nix-shell -p melonDS xdotool xorg-server imagemagick --run "$0 $*"
+        REEXEC_CMD="ROM_PATH=$(printf '%q' "${1:-}") SAV_PATH=$(printf '%q' "${2:-}") OUTPUT_DIR=$(printf '%q' "${3:-}") exec $(printf '%q' "$0")"
+        exec nix-shell -p melonds xdotool xorg-server imagemagick --run "${REEXEC_CMD}"
     fi
 fi
 
@@ -37,7 +40,7 @@ missing=()
 if [ ${#missing[@]} -gt 0 ]; then
     echo "[!] Error: Missing required dependencies: ${missing[*]}" >&2
     echo "    Install them via your system package manager, or run with nix-shell:" >&2
-    echo "    nix-shell -p melonDS xdotool xorg-server imagemagick" >&2
+    echo "    nix-shell -p melonds xdotool xorg-server imagemagick" >&2
     exit 1
 fi
 
@@ -54,6 +57,7 @@ if [ -z "${ROM_PATH}" ] || [ ! -f "${ROM_PATH}" ]; then
     echo "  OUTPUT:    Directory to store generated screenshots (default: examples/melonds/output)"
     echo ""
     echo "Environment Variables (optional overrides):"
+    echo "  ROM_PATH, SAV_PATH, OUTPUT_DIR (alternatives to the positional arguments)"
     echo "  MELONDS_BIN, XDOTOOL_BIN, XVFB_BIN, MAGICK_BIN, IMPORT_BIN"
     exit 1
 fi
@@ -83,7 +87,19 @@ cleanup() {
     if [ -n "${MELONDS_PID}" ] && kill -0 "${MELONDS_PID}" 2>/dev/null; then
         kill -9 "${MELONDS_PID}" 2>/dev/null || true
     fi
+    # Catch any emulator child that escaped the direct PID (e.g. future wrappers),
+    # scoped to this run's private ROM copy.
+    if [ -n "${WORK_DIR}" ]; then
+        pkill -9 -f "${WORK_DIR}/game.nds" 2>/dev/null || true
+    fi
     if [ -n "${XVFB_PID}" ] && kill -0 "${XVFB_PID}" 2>/dev/null; then
+        # Ask Xvfb to exit gracefully first so it removes its lock and socket,
+        # then force-kill if it is still alive.
+        kill -TERM "${XVFB_PID}" 2>/dev/null || true
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            kill -0 "${XVFB_PID}" 2>/dev/null || break
+            sleep 0.2
+        done
         kill -9 "${XVFB_PID}" 2>/dev/null || true
     fi
     rm -rf "${WORK_DIR}"
@@ -176,14 +192,14 @@ MAP_CROP="${OUTPUT_DIR}/world_map.png"
 echo "[*] Opening Main Menu ('s' key / DS X button)..."
 "${XDOTOOL}" windowfocus "${WID}"
 "${XDOTOOL}" keydown s; sleep 0.6; "${XDOTOOL}" keyup s
-sleep 2
+sleep 3
 
 echo "[*] Opening Unit Info and inspecting Luso..."
 "${XDOTOOL}" windowfocus "${WID}"
 "${XDOTOOL}" keydown x; sleep 0.6; "${XDOTOOL}" keyup x
 sleep 2
 "${XDOTOOL}" keydown x; sleep 0.6; "${XDOTOOL}" keyup x
-sleep 3
+sleep 4
 
 echo "[*] Capturing Unit Info screen..."
 UNIT_FULL="${OUTPUT_DIR}/unit_info_full.png"
