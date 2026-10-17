@@ -67,11 +67,13 @@ OFF_GIL = 0x281C  # uint32, max 99,999,999 (RAM 0x0212D6FC)
 OFF_CLAN_POINTS = 0x2820  # uint16, max 9,999 (RAM 0x0212D700)
 OFF_CLAN_TALENTS = 0x2824  # 4 bytes: Negotiation, Aptitude, Teamwork, Adaptability (RAM 0x0212D704)
 OFF_CLAN_PRIVILEGES_START = 0x2937  # 9-byte Clan Privilege bitfield (RAM 0x0212D817)
-# Privilege bits within those 9 bytes. Verified in melonDS (2026-10-17) by poking RAM and
-# opening Judge Menu > Clan Privileges: the mask shows all 56 named privileges; 0x2937
-# bits 0..3 are not privileges (the list stays empty), and 0x293C bits 4..7 / 0x293D
-# bits 0..1 show up as nameless "-" entries. Bits outside the mask are never touched.
-CLAN_PRIVILEGE_MASK = bytes.fromhex("f0ffffffff0ffcffff")
+# Privilege bits within those 9 bytes (flags 0x071C..0x075B from sysdata.pak file 0x23 /
+# ARM9 0x0210695C..0x021069FC and JD_message_0.pak file 15):
+# - 0x2937 bits 0..3 (0x0718..0x071B) precede entry 1 of the privilege table.
+# - 0x293C bits 4..7 and 0x293D bits 0..1 (entries 41..46, 0x0744..0x0749) are nameless "-".
+# - 0x293F bits 4..7 (0x075C..0x075F) lie past the final entry 64 (0x075B, Always Counter).
+# The remaining 58 bits (entries 1..40 and 47..64) are the exact 58 named Clan Privileges.
+CLAN_PRIVILEGE_MASK = bytes.fromhex("f0ffffffff0ffcff0f")
 
 # Minimum plausible FFTA2 save size (NDS saves are 512 KiB; floor filters junk matches)
 MIN_SAVE_SIZE = 0x10000

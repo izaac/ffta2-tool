@@ -702,13 +702,15 @@ def test_clan_perks():
     save.clan_talents = (150, -1, 99, 7)
     assert (save.gil, save.clan_points, save.clan_talents) == (99999999, 9999, (99, 0, 99, 7))
 
-    # Unlocking ORs the privilege mask: owned privileges and non-privilege bits survive
+    # Unlocking ORs the 58-bit privilege mask: owned privileges and non-privilege bits survive
+    assert sum(b.bit_count() for b in CLAN_PRIVILEGE_MASK) == 58
     base = OFF_CLAN_PRIVILEGES_START
     save.plaintext[base] = 0x05  # bits 0..3 are not privileges
-    save.plaintext[base + 5] = 0xA0  # bits 4..7 are not privileges
+    save.plaintext[base + 5] = 0xA0  # bits 4..7 are nameless "-" entries
+    save.plaintext[base + 8] = 0x50  # bits 4..7 lie past entry 64 (0x075B)
     save.unlock_clan_privileges()
     field = bytes(save.plaintext[base : base + len(CLAN_PRIVILEGE_MASK)])
-    assert field[0] == 0xF5 and field[5] == 0xAF, field.hex()
+    assert field[0] == 0xF5 and field[5] == 0xAF and field[8] == 0x5F, field.hex()
     assert all(b & m == m for b, m in zip(field, CLAN_PRIVILEGE_MASK, strict=True))
 
     # master-abilities --unit must refuse an empty unit slot instead of writing 0xFF into it
@@ -726,7 +728,7 @@ def test_clan_perks():
 
 def test_operations_idempotent():
     """Every save-modifying operation, applied twice through a save/load cycle, is byte-stable."""
-    from ffta2_tool.slots import SlotManager
+    from ffta2_tool.slots import SLOT_RECORD_SIZE, SlotManager
     from ffta2_tool.stats import topup_clan_stats
 
     def via_save(slot, fn):
@@ -750,7 +752,7 @@ def test_operations_idempotent():
         sm.put_slot_payload(1, payload, seed=seed, preview_source=sm.get_entry_bytes(0))
 
     def set_weapon(save):
-        save.get_unit(0).weapon_id = 0x0074
+        save.get_unit(0).weapon_id = 0x0018
         save.sync_equipped_to_inventory()
 
     def clan_all(save):
@@ -761,20 +763,23 @@ def test_operations_idempotent():
         save.difficulty = 1
 
     ops = {
-        "load/save": via_save(0, lambda save: None),
-        "set-weapon": via_save(0, set_weapon),
-        "patch-meta-squad": via_save(0, apply_meta_squad),
-        "topup-stats": via_save(0, topup_clan_stats),
-        "set-difficulty slot 2": via_save(1, set_hard),
-        "master-abilities": via_save(0, FFTA2Save.master_all_unit_abilities),
-        "clan --all": via_save(1, clan_all),
-        "slots set-difficulty": via_slots(lambda sm: sm.set_slot_difficulty(1, 2)),
-        "slots wipe-quicksave": via_slots(SlotManager.deactivate_quicksave),
-        "slots copy 1->2": via_slots(copy_slot),
+        "load/save": (0, via_save(0, lambda save: None)),
+        "set-weapon slot 2": (1, via_save(1, set_weapon)),
+        "patch-meta-squad slot 2": (1, via_save(1, apply_meta_squad)),
+        "topup-stats slot 2": (1, via_save(1, topup_clan_stats)),
+        "set-difficulty slot 2": (1, via_save(1, set_hard)),
+        "master-abilities": (0, via_save(0, FFTA2Save.master_all_unit_abilities)),
+        "clan --all": (1, via_save(1, clan_all)),
+        "slots set-difficulty": (1, via_slots(lambda sm: sm.set_slot_difficulty(1, 2))),
+        "slots wipe-quicksave": (None, via_slots(SlotManager.deactivate_quicksave)),
+        "slots copy 1->2": (1, via_slots(copy_slot)),
     }
     source = _two_slot_example()
+    src_sm = SlotManager(source)
+    s1_off = src_sm.record_offset(0)
+    s1_record = source[s1_off : s1_off + SLOT_RECORD_SIZE]
     with tempfile.TemporaryDirectory() as tmp:
-        for name, op in ops.items():
+        for name, (target_slot, op) in ops.items():
             path = Path(tmp) / "op.sav"
             path.write_bytes(source)
             op(path)
@@ -784,6 +789,8 @@ def test_operations_idempotent():
             assert len(once) == len(source), f"{name} changed the file size"
             sm = SlotManager(once)
             assert sm.verify_slot(0)[0] and sm.verify_slot(1)[0], f"{name} broke a slot checksum"
+            if target_slot == 1:
+                assert once[s1_off : s1_off + SLOT_RECORD_SIZE] == s1_record, f"{name} touched Slot 1 record"
     print(f"[PASS] {len(ops)} save operations are byte-for-byte idempotent and keep both slots valid.")
 
 
