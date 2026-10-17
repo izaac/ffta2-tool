@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import struct
 
-# Standard offsets for FFTA2 NDS saves (512 KB EEPROM/Flash)
+# Standard offsets for FFTA2 NDS saves (512 KB EEPROM/Flash). They address record
+# position 0; a slot can live in any of the 4 record positions (see ffta2_tool.slots),
+# and FFTA2Save stages the slot's record into this window before using them.
 RECORD_HEADER_OFFSET = 0x01B8
 CHECKSUM_OFFSET = 0x01B8
 CHECKSUM_SIZE = 4

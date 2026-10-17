@@ -79,18 +79,27 @@ def main() -> None:
         print(f"=== Save Slot Overview: {save_path} ===")
         for s in (0, 1):
             prev = sm.get_slot_preview(s)
+            if not prev["has_data"]:
+                print(f"[EMPTY] Slot {s + 1}: No data")
+                continue
             valid, stored, calc = sm.verify_slot(s)
             status = "VALID" if valid else "INVALID"
             print(f"[{status}] Slot {s + 1}:")
             print(f"       Leader:       {prev['leader_name']}")
             print(f"       Difficulty:   {prev.get('difficulty_label', 'Unknown')}")
+            if prev["badge_mismatch"]:
+                badge = "Hard" if prev["badge_difficulty"] == 1 else "Normal"
+                print(f"       WARNING:      load-screen badge says {badge}, the game plays the value above")
             print(f"       Party Size:   {prev['member_count']} units")
             print(f"       Quests:       {prev['cleared_quests']}")
             print(f"       Play Time:    {prev['play_time_formatted']}")
-            print(f"       Active Flag:  {prev['active']}")
+            print(f"       Record:       0x{prev['record_offset']:04X} (entry position {prev['position']})")
             print(f"       Checksum:     Stored=0x{stored:08X}, Calc=0x{calc:08X}")
-        is_mirrored = sm.raw[:0x40000] == sm.raw[0x40000:0x80000]
-        print(f"Dual-Bank Mirror:    {'SYNCHRONIZED' if is_mirrored else 'OUT OF SYNC'}")
+        if sm.size < 0x80000:
+            print(f"Dual-Bank Mirror:    n/a ({sm.size // 1024} KB image has a single bank)")
+        else:
+            is_mirrored = sm.raw[:0x40000] == sm.raw[0x40000:0x80000]
+            print(f"Dual-Bank Mirror:    {'SYNCHRONIZED' if is_mirrored else 'OUT OF SYNC'}")
         return
 
     if args.action == "import":
@@ -101,10 +110,16 @@ def main() -> None:
 
         src_save = FFTA2Save(src_path)
         payload = src_save.plaintext[0x01C0 : 0x01C0 + 0x3400]
+        src_entry = SlotManager(src_path.read_bytes()).get_entry_bytes(0)
         target_idx = args.slot - 1
 
         print(f"Importing {src_path} into Slot {args.slot}...")
-        sm.put_slot_payload(slot_idx=target_idx, plaintext_payload=payload, seed=0x0031 if target_idx == 1 else 0x0027)
+        sm.put_slot_payload(
+            slot_idx=target_idx,
+            plaintext_payload=payload,
+            seed=0x0031 if target_idx == 1 else 0x0027,
+            preview_source=src_entry,
+        )
         sm.save_to_file(save_path)
         print(f"[SUCCESS] Slot {args.slot} imported and dual-bank mirrored into {save_path}!")
         return
@@ -113,9 +128,15 @@ def main() -> None:
         src_idx = args.src - 1
         dst_idx = args.dst - 1
         _, seed, payload = sm.get_slot_payload(src_idx)
+        src_entry = sm.get_entry_bytes(src_idx)
 
         print(f"Copying Slot {args.src} -> Slot {args.dst}...")
-        sm.put_slot_payload(slot_idx=dst_idx, plaintext_payload=payload, seed=0x0031 if dst_idx == 1 else 0x0027)
+        sm.put_slot_payload(
+            slot_idx=dst_idx,
+            plaintext_payload=payload,
+            seed=0x0031 if dst_idx == 1 else 0x0027,
+            preview_source=src_entry,
+        )
         sm.save_to_file(save_path)
         print(f"[SUCCESS] Slot {args.src} copied to Slot {args.dst} and dual-bank mirrored!")
         return

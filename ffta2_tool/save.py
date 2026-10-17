@@ -9,9 +9,10 @@ import struct
 from datetime import datetime
 from pathlib import Path
 
-from ffta2_tool.charset import decode_ffta2_string
 from ffta2_tool.crypto import (
     CHECKSUM_OFFSET,
+    ENCRYPTED_END,
+    RECORD_HEADER_OFFSET,
     calculate_checksum,
     decrypt_save_payload,
     encrypt_save_payload,
@@ -371,25 +372,44 @@ class Unit:
 class FFTA2Save:
     """FFTA2 Save File manager."""
 
-    def __init__(self, filepath: str | Path):
+    def __init__(self, filepath: str | Path, slot: int = 0):
+        from ffta2_tool.slots import SlotManager
+
         self.path = Path(filepath)
         self.raw_data = bytearray(self.path.read_bytes())
         if len(self.raw_data) < MIN_SAVE_SIZE:
             raise ValueError(
                 f"Save file too small ({len(self.raw_data)} bytes); expected at least 0x{MIN_SAVE_SIZE:X} bytes"
             )
-        self.keystream = extract_keystream(self.raw_data)
-        self.plaintext = bytearray(self.raw_data)
+        # The game has no fixed slot-to-record mapping (see SlotManager.record_offset):
+        # every in-game save moves the slot to another of the 4 physical records.
+        # Stage the record backing `slot` in the canonical 0x01B8 window so all fixed
+        # OFF_* offsets address that slot; save() writes it back to its real location.
+        self.slot = slot
+        self.record_base = SlotManager(self.raw_data).record_offset(slot)
+        work = bytearray(self.raw_data)
+        if self.record_base != RECORD_HEADER_OFFSET:
+            record_size = ENCRYPTED_END - RECORD_HEADER_OFFSET
+            work[RECORD_HEADER_OFFSET:ENCRYPTED_END] = self.raw_data[self.record_base : self.record_base + record_size]
+        self.keystream = extract_keystream(work)
+        self.plaintext = work
         decrypt_save_payload(self.plaintext, self.keystream)
 
     @property
+    def slot_player_name(self) -> str:
+        """Leader name shown on the load-screen card of the loaded slot."""
+        from ffta2_tool.slots import SlotManager
+
+        return SlotManager(self.raw_data).get_slot_preview(self.slot)["leader_name"]
+
+    @property
     def slot_0_player_name(self) -> str:
-        name_bytes = self.raw_data[0x3C : 0x3C + 16]
-        return decode_ffta2_string(name_bytes)
+        """Backward-compatible alias of slot_player_name."""
+        return self.slot_player_name
 
     @property
     def difficulty(self) -> int:
-        """Return the slot 0 difficulty (1 = Hard, 2 = Normal)."""
+        """Return the loaded slot's difficulty (1 = Hard, 2 = Normal)."""
         val = self.plaintext[OFF_DIFFICULTY]
         return 1 if val == 1 else 2
 
@@ -498,15 +518,22 @@ class FFTA2Save:
         final_data = bytearray(self.plaintext)
         encrypt_save_payload(final_data, self.keystream)
 
-        # Always refresh the load-screen preview, wipe quicksave, and mirror dual
-        # banks if full 512 KB image
-        if len(final_data) >= 0x40000:
-            from ffta2_tool.slots import SlotManager
+        # Move the staged record back to the physical record that backs this slot and
+        # restore the other slot's record untouched.
+        if self.record_base != RECORD_HEADER_OFFSET:
+            record = bytes(final_data[RECORD_HEADER_OFFSET:ENCRYPTED_END])
+            final_data[RECORD_HEADER_OFFSET:ENCRYPTED_END] = self.raw_data[RECORD_HEADER_OFFSET:ENCRYPTED_END]
+            final_data[self.record_base : self.record_base + len(record)] = record
 
-            sm = SlotManager(final_data)
-            sm.refresh_preview(0)
-            sm.deactivate_quicksave()
-            final_data = bytearray(sm.raw)
+        # Always refresh the load-screen preview and wipe the quicksave (any save size),
+        # and mirror dual banks when the image has a second bank. The written image keeps
+        # the input size (64 KB melonDS or 512 KB cart dumps).
+        from ffta2_tool.slots import SlotManager
+
+        sm = SlotManager(final_data)
+        sm.refresh_preview(self.slot)
+        sm.deactivate_quicksave()
+        final_data = bytearray(sm.raw[: len(final_data)])
 
         if backup and out.exists():
             backup_path = create_backup_snapshot(out)

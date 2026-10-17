@@ -6,15 +6,43 @@ Technical reference for *Final Fantasy Tactics A2: Grimoire of the Rift* (Ninten
 
 ## 1. High-Level Memory & Save Layout
 
-FFTA2 saves are 512 KB (524,288 bytes) EEPROM / Flash images.
+FFTA2 saves are 512 KB (524,288 bytes) EEPROM / Flash images (melonDS writes 64 KB images with the same layout).
 
 | Offset Range | Length | Description |
 |---|---|---|
-| `0x0000 - 0x00DC` | 220 B | Slot metadata table copy 1 (Sequence number, slot 0-3 preview data) |
-| `0x00DC - 0x01B8` | 220 B | Slot metadata table copy 2 (Redundant backup for power-loss safety) |
-| `0x01B8 - 0x01BF` | 8 B | Record header for active save slot |
-| `0x01C0 - 0x35BF` | 13,312 B (`0x3400`) | Encrypted save payload (Units, inventory, clan, quests) |
+| `0x0000 - 0x00DC` | 220 B | Slot metadata table copy 1 (save counter, 4 record entries with preview data) |
+| `0x00DC - 0x01B8` | 220 B | Slot metadata table copy 2 (the game alternates between the two copies) |
+| `0x01B8 - 0x35C0` | 13,320 B (`0x3408`) | Record position 0: 8 B header + encrypted payload |
+| `0x35C0 - 0x69C8` | 13,320 B | Record position 1 |
+| `0x69C8 - 0x9DD0` | 13,320 B | Record position 2 |
+| `0x9DD0 - 0xD1D8` | 13,320 B | Record position 3 |
 | `0x1000 - 0x10FF` | 256 B | Unused save padding (Contains exposed raw 256-byte keystream) |
+
+Offsets elsewhere in this document that are given for "the" record (`0x01B8` header,
+`0x01C0` payload) are relative to record position 0; the same layout applies at every
+record position.
+
+### Slot records and metadata entries
+
+Records are not tied to load-screen slots. Which record a slot loads from is decided by
+the metadata table:
+
+- The game reads the copy with the higher save counter (`+0x04`, uint32; ARM9 `0x0210D548`
+  picks copy 1 only when its counter is strictly higher). Each save writes the other copy
+  with counter + 1.
+- Each copy has 4 entries of `0x2C` bytes at `+0x2C`. Entry position N describes the record
+  at `0x01B8 + N * 0x3408` (`0x0210D960`).
+- Entry bytes: `+0x04` active (0 = never used), `+0x05` retired (0 = live, nonzero = free),
+  `+0x06` slot id (0 = SLOT 1, 1 = SLOT 2, 2 = quicksave, `0xFF` = none). Preview fields
+  follow (member count `+0x08`, quests `+0x0C`, leader name `+0x10`, difficulty badge
+  `+0x24` bit 0, rank `+0x26`, level `+0x27`, play time `+0x28..+0x2B`).
+- Load (`0x0210D66C`): a slot is the first entry 0..3 with `+0x04 != 0`, `+0x05 == 0` and
+  `+0x06 == slot id`; no match means "No data".
+- Save (`0x0210D6BC`): the slot is written to the first entry 0..3 with `+0x05 != 0`, and
+  the entry it was loaded from is retired (`+0x05 = 1`). A slot therefore moves to another
+  record on every save, and can live in any of the 4 positions.
+- The gameplay difficulty is payload byte `0x2798` of the loaded record (1 = Hard); the
+  badge at entry `+0x24` is display only.
 
 ---
 

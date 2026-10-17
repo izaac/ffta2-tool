@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 from ffta2_tool.arm_tools import extract_arm9, extract_overlays, inspect_nds_rom
-from ffta2_tool.crypto import verify_save_checksum
 from ffta2_tool.mappings import (
     get_item_name,
     get_job_name,
@@ -13,6 +12,7 @@ from ffta2_tool.mappings import (
 )
 from ffta2_tool.patcher import META_SQUAD_BUILDS, apply_meta_squad
 from ffta2_tool.save import FFTA2Save, auto_detect_save
+from ffta2_tool.slots import SlotManager
 from ffta2_tool.validator import validate_save, validate_unit
 
 SAVE_HELP = "Path to .sav file (auto-detected from FFTA2_Backups and mounted media if omitted)"
@@ -76,12 +76,15 @@ def cmd_topup_stats(args: argparse.Namespace) -> int:
 
 
 def cmd_set_difficulty(args: argparse.Namespace) -> int:
-    save = FFTA2Save(args.save_file)
+    slot_idx = getattr(args, "slot", 1) - 1
+    save = FFTA2Save(args.save_file, slot=slot_idx)
     target = 1 if args.difficulty == "hard" else 2
     save.difficulty = target
     out_path = args.output if args.output else args.save_file
     save.save(out_path, backup=not args.no_backup)
-    print(f"[SUCCESS] Difficulty set to {args.difficulty.capitalize()} and signed: {out_path}!")
+    print(
+        f"[SUCCESS] Slot {slot_idx + 1} difficulty set to {args.difficulty.capitalize()} and signed: {out_path}!"
+    )
     return 0
 
 
@@ -134,17 +137,27 @@ def cmd_patch_meta_squad(args: argparse.Namespace) -> int:
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
-    save_bytes = Path(args.save_file).read_bytes()
-    is_valid, stored, calculated = verify_save_checksum(save_bytes)
+    # Verify the records the game actually loads for each slot (they move on every save)
+    sm = SlotManager(Path(args.save_file).read_bytes())
     print(f"File:       {args.save_file}")
-    print(f"Stored:     0x{stored:08X}")
-    print(f"Calculated: 0x{calculated:08X}")
-    if is_valid:
+    all_valid = True
+    found = False
+    for slot in (0, 1):
+        if not sm.has_data(slot):
+            print(f"Slot {slot + 1}:     No data")
+            continue
+        found = True
+        is_valid, stored, calculated = sm.verify_slot(slot)
+        all_valid = all_valid and is_valid
+        print(
+            f"Slot {slot + 1}:     record 0x{sm.record_offset(slot):04X} "
+            f"stored=0x{stored:08X} calculated=0x{calculated:08X} {'VALID' if is_valid else 'MISMATCH'}"
+        )
+    if found and all_valid:
         print("[PASS] Checksum is VALID!")
         return 0
-    else:
-        print("[FAIL] Checksum MISMATCH (Save corrupted)!")
-        return 1
+    print("[FAIL] Checksum MISMATCH (Save corrupted)!" if found else "[FAIL] No save data in either slot!")
+    return 1
 
 
 def cmd_info(args: argparse.Namespace) -> int:
@@ -155,8 +168,8 @@ def cmd_info(args: argparse.Namespace) -> int:
     diff_str = "Hard" if diff_val == 1 else ("Normal" if diff_val == 2 else f"Unknown ({diff_val})")
     print(f"Difficulty:         {diff_str}")
 
-    is_valid, stored, calc = verify_save_checksum(save.raw_data)
-    print(f"Checksum: 0x{stored:08X} ({'VALID' if is_valid else 'INVALID'})")
+    is_valid, stored, calc = SlotManager(save.raw_data).verify_slot(save.slot)
+    print(f"Checksum: 0x{stored:08X} ({'VALID' if is_valid else 'INVALID'}) at record 0x{save.record_base:04X}")
 
     inv = save.get_inventory()
     print(f"Clan Inventory Items: {len(inv)} unique stacks registered")
@@ -299,6 +312,12 @@ def main() -> None:
     p_patch.add_argument(
         "--no-god-stats", action="store_true", help="Skip topping up unit stats to 115%% god-roll maximums"
     )
+    p_patch.add_argument(
+        "--difficulty",
+        "-d",
+        choices=["hard", "normal"],
+        help="Override difficulty setting (hard or normal; keeps current if omitted)",
+    )
     p_patch.add_argument("--no-backup", action="store_true", help="Skip the pre-write timestamped backup snapshot")
     p_patch.set_defaults(func=cmd_patch_meta_squad)
 
@@ -309,6 +328,27 @@ def main() -> None:
     p_topup.add_argument("--output", "-o", help="Output save path (overwrites if omitted)")
     p_topup.add_argument("--no-backup", action="store_true", help="Skip the pre-write timestamped backup snapshot")
     p_topup.set_defaults(func=cmd_topup_stats)
+
+    # set-difficulty
+    p_diff = subparsers.add_parser("set-difficulty", help="Set difficulty setting for a save slot")
+    p_diff.add_argument("save_file", nargs="?", help=SAVE_HELP)
+    p_diff.add_argument(
+        "--difficulty",
+        "-d",
+        choices=["hard", "normal"],
+        required=True,
+        help="Difficulty level to set (hard or normal)",
+    )
+    p_diff.add_argument(
+        "--slot",
+        type=int,
+        choices=[1, 2],
+        default=1,
+        help="Slot index to modify (1 or 2, default: 1)",
+    )
+    p_diff.add_argument("--output", "-o", help="Output save path (overwrites if omitted)")
+    p_diff.add_argument("--no-backup", action="store_true", help="Skip the pre-write timestamped backup snapshot")
+    p_diff.set_defaults(func=cmd_set_difficulty)
 
     # validate
     p_val = subparsers.add_parser("validate", help="Validate clan units against NDS UI crash conditions")
