@@ -177,3 +177,17 @@ In FFTA2, advanced jobs (e.g. Parivir, Sage, Cannoneer, Assassin) and hidden job
 | `0x28AF - 0x28B0` | 2 B | `0x0212D81F..0x0212D820` | Unlocks special/hidden job classes |
 
 Setting these 5 bytes to `0xFF` instantly opens all job classes across all 7 races in the Job Change menu without needing quest prerequisites.
+
+---
+
+## 8. Game Engine Difficulty Setting (`0x2798` Payload / `0x2958` Save)
+
+Reversed from ARM9 functions `0x020DA938` (New Game initializer), `0x020D0C58` (difficulty getter), and `0x0210D7A8` (save record preview builder):
+
+| Field | Location | Value | Description |
+|---|---|---|---|
+| **Engine Difficulty Flag** | Payload `+0x2798` (`0x2958` in save file) | `1` = Hard, `0` = Normal | Read continuously by battle and AI routines (`0x020D0C58`). Set during New Game. |
+| **Load-Screen Preview Badge** | Preview Entry `+0x24` (byte 36) | `1` = Hard, `0` = Normal | Visual badge rendered on load screen. Re-generated from `+0x2798` on every in-game save. |
+
+> [!IMPORTANT]
+> If a save editor modifies only the preview badge at byte 36 without updating the engine difficulty at payload `+0x2798`, the game engine continues running in Normal mode. On the next in-game save, the game's native save routine (`0x0210D790`) reads `+0x2798` (0) and overwrites byte 36 back to `0`, causing the save to revert to Normal. Both locations must be updated simultaneously.

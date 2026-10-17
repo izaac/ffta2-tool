@@ -55,8 +55,10 @@ OFF_UNIT_ABILITIES_END = 0x11C  # Byte offset of ability AP array end / unit bou
 INVENTORY_BASE = 0x1DFC
 MAX_INVENTORY_SLOTS = 400
 
-# Difficulty setting in the slot 0 payload (1 = Hard, 2 = Normal)
-OFF_DIFFICULTY = 0x3558
+# Difficulty setting in the slot 0 payload (1 = Hard, 0 = Normal)
+# ARM9 routine (0x0210D7A8 / 0x020D0C58 / 0x020D0C80):
+# Relative offset in payload is 0x2798 (file offset 0x01C0 + 0x2798 = 0x2958)
+OFF_DIFFICULTY = 0x2958
 
 # Minimum plausible FFTA2 save size (NDS saves are 512 KiB; floor filters junk matches)
 MIN_SAVE_SIZE = 0x10000
@@ -388,13 +390,14 @@ class FFTA2Save:
     @property
     def difficulty(self) -> int:
         """Return the slot 0 difficulty (1 = Hard, 2 = Normal)."""
-        return self.plaintext[OFF_DIFFICULTY]
+        val = self.plaintext[OFF_DIFFICULTY]
+        return 1 if val == 1 else 2
 
     @difficulty.setter
     def difficulty(self, value: int) -> None:
-        if value not in (1, 2):
+        if value not in (0, 1, 2):
             raise ValueError("difficulty must be 1 (Hard) or 2 (Normal)")
-        self.plaintext[OFF_DIFFICULTY] = value
+        self.plaintext[OFF_DIFFICULTY] = 1 if value == 1 else 0
 
     def get_unit(self, index: int) -> Unit | None:
         if not (0 <= index < MAX_UNITS):

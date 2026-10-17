@@ -28,6 +28,10 @@ PREVIEW_OFFSET_BASE = 0x2C
 
 BANK_SIZE = 0x40000  # 256 KB
 
+# ARM9 difficulty byte in decrypted payload (0x0210D7A8 / 0x020D0C58 / 0x020D0C80)
+# 1 = Hard, 0 = Normal
+PAYLOAD_OFF_DIFFICULTY = 0x2798
+
 
 def compute_lcg_keystream(seed: int, length: int = 0x3400) -> bytes:
     """Generate keystream bytes using the reverse-engineered 8-bit LCG.
@@ -155,12 +159,12 @@ class SlotManager:
         mins = entry[42]
         secs = entry[43]
 
-        # In decrypted payload, difficulty is stored at offset 0x3558 (0x3398 from payload start):
-        # 1 = Hard, 2 = Normal.
+        # In decrypted payload, difficulty is stored at offset 0x2798:
+        # 1 = Hard, 0 = Normal.
         _, _, payload = self.get_slot_payload(slot_idx)
-        payload_diff = payload[0x3558 - 0x01C0] if len(payload) > 0x3558 - 0x01C0 else 1
+        payload_diff = payload[PAYLOAD_OFF_DIFFICULTY] if len(payload) > PAYLOAD_OFF_DIFFICULTY else 0
 
-        difficulty = 1 if diff_byte == 1 else (2 if diff_byte in (0, 2) else payload_diff)
+        difficulty = 1 if (diff_byte == 1 or payload_diff == 1) else 2
         difficulty_label = "Hard" if difficulty == 1 else "Normal"
 
         return {
@@ -196,7 +200,7 @@ class SlotManager:
             return
 
         _, _, payload = self.get_slot_payload(slot_idx)
-        diff_val = payload[0x3558 - 0x01C0] if len(payload) > 0x3558 - 0x01C0 else 1
+        diff_val = payload[PAYLOAD_OFF_DIFFICULTY] if len(payload) > PAYLOAD_OFF_DIFFICULTY else 0
         u0_off = 0x0238 - 0x01C0  # Unit 0 relative to payload start
         name_off = 0x01EC - 0x01C0
         u0_name_raw = payload[name_off : name_off + 16]
@@ -252,8 +256,8 @@ class SlotManager:
         if len(plaintext_payload) != SLOT_PAYLOAD_SIZE:
             raise ValueError(f"Payload must be {SLOT_PAYLOAD_SIZE} bytes")
 
-        if difficulty is not None and len(plaintext_payload) > 0x3558 - 0x01C0:
-            plaintext_payload[0x3558 - 0x01C0] = difficulty & 0xFF
+        if difficulty is not None and len(plaintext_payload) > PAYLOAD_OFF_DIFFICULTY:
+            plaintext_payload[PAYLOAD_OFF_DIFFICULTY] = 1 if difficulty == 1 else 0
 
         base = SLOT_OFFSETS[slot_idx]
 
@@ -290,9 +294,13 @@ class SlotManager:
                 unit_count += 1
 
         diff_val = (
-            difficulty
+            (1 if difficulty == 1 else 0)
             if difficulty is not None
-            else (plaintext_payload[0x3558 - 0x01C0] if len(plaintext_payload) > 0x3558 - 0x01C0 else 1)
+            else (
+                1
+                if (len(plaintext_payload) > PAYLOAD_OFF_DIFFICULTY and plaintext_payload[PAYLOAD_OFF_DIFFICULTY] == 1)
+                else 0
+            )
         )
         diff_byte = 1 if diff_val == 1 else 0
 
@@ -348,16 +356,17 @@ class SlotManager:
         self.raw[BANK_SIZE : BANK_SIZE * 2] = self.raw[:BANK_SIZE]
 
     def set_slot_difficulty(self, slot_idx: int, difficulty: int) -> None:
-        """Set difficulty for a slot (1 = Hard, 2 = Normal), updating payload and preview."""
+        """Set difficulty for a slot (1 = Hard, 2/0 = Normal), updating payload and preview."""
         if slot_idx not in (0, 1):
             raise ValueError("slot_idx must be 0 (Slot 1) or 1 (Slot 2)")
-        if difficulty not in (1, 2):
+        if difficulty not in (0, 1, 2):
             raise ValueError("difficulty must be 1 (Hard) or 2 (Normal)")
 
+        diff_byte = 1 if difficulty == 1 else 0
         base = SLOT_OFFSETS[slot_idx]
         _, seed, payload = self.get_slot_payload(slot_idx)
-        if len(payload) > 0x3558 - 0x01C0:
-            payload[0x3558 - 0x01C0] = difficulty & 0xFF
+        if len(payload) > PAYLOAD_OFF_DIFFICULTY:
+            payload[PAYLOAD_OFF_DIFFICULTY] = diff_byte
 
         work = bytearray(SLOT_RECORD_SIZE)
         work[0:4] = b"\x00\x00\x00\x00"
