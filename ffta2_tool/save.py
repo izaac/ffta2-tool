@@ -61,6 +61,13 @@ MAX_INVENTORY_SLOTS = 400
 # Relative offset in payload is 0x2798 (file offset 0x01C0 + 0x2798 = 0x2958)
 OFF_DIFFICULTY = 0x2958
 
+# Clan Economy & Privileges in decrypted save payload
+# File offsets are 0x01C0 + payload offset
+OFF_GIL = 0x281C  # uint32, max 99,999,999 (RAM 0x0212D6FC)
+OFF_CLAN_POINTS = 0x2820  # uint16, max 9,999 (RAM 0x0212D700)
+OFF_CLAN_TALENTS = 0x2824  # 4 bytes: Negotiation, Aptitude, Teamwork, Adaptability (RAM 0x0212D704)
+OFF_CLAN_PRIVILEGES_START = 0x2937  # 9 bytes bitfield for all 64 Clan Privileges (RAM 0x0212D817)
+
 # Minimum plausible FFTA2 save size (NDS saves are 512 KiB; floor filters junk matches)
 MIN_SAVE_SIZE = 0x10000
 
@@ -501,6 +508,67 @@ class FFTA2Save:
         """
         self.plaintext[0x2814:0x2817] = b"\xff\xff\xff"
         self.plaintext[0x28AF:0x28B1] = b"\xff\xff"
+
+    @property
+    def gil(self) -> int:
+        """Current clan Gil balance."""
+        return struct.unpack_from("<I", self.plaintext, OFF_GIL)[0]
+
+    @gil.setter
+    def gil(self, amount: int) -> None:
+        """Set clan Gil balance (clamped to 0..99,999,999)."""
+        clamped = max(0, min(amount, 99999999))
+        struct.pack_into("<I", self.plaintext, OFF_GIL, clamped)
+
+    @property
+    def clan_points(self) -> int:
+        """Current Clan Points (CP)."""
+        return struct.unpack_from("<H", self.plaintext, OFF_CLAN_POINTS)[0]
+
+    @clan_points.setter
+    def clan_points(self, points: int) -> None:
+        """Set Clan Points (clamped to 0..9999)."""
+        clamped = max(0, min(points, 9999))
+        struct.pack_into("<H", self.plaintext, OFF_CLAN_POINTS, clamped)
+
+    @property
+    def clan_talents(self) -> tuple[int, int, int, int]:
+        """Clan talents as (Negotiation, Aptitude, Teamwork, Adaptability)."""
+        return tuple(self.plaintext[OFF_CLAN_TALENTS : OFF_CLAN_TALENTS + 4])
+
+    @clan_talents.setter
+    def clan_talents(self, values: tuple[int, int, int, int] | list[int]) -> None:
+        """Set all four clan talents (clamped to 0..99 each)."""
+        if len(values) != 4:
+            raise ValueError("clan_talents requires 4 values: (Negotiation, Aptitude, Teamwork, Adaptability)")
+        clamped = bytes(max(0, min(v, 99)) for v in values)
+        self.plaintext[OFF_CLAN_TALENTS : OFF_CLAN_TALENTS + 4] = clamped
+
+    def unlock_clan_privileges(self) -> None:
+        """Unlock all 64 Clan Privileges in the Judge menu."""
+        self.plaintext[OFF_CLAN_PRIVILEGES_START] = 0xFF
+        self.plaintext[OFF_CLAN_PRIVILEGES_START + 1 : OFF_CLAN_PRIVILEGES_START + 5] = b"\xff\xff\xff\xff"
+        self.plaintext[OFF_CLAN_PRIVILEGES_START + 5 : OFF_CLAN_PRIVILEGES_START + 9] = struct.pack("<I", 0xFFFFFC0F)
+
+    def master_all_unit_abilities(self, unit_index: int | None = None) -> int:
+        """Master all abilities for a specific unit (0..23) or all recruited clan units.
+
+        Returns the number of units whose ability arrays were mastered.
+        """
+        if unit_index is not None:
+            unit = self.get_unit(unit_index)
+            if unit is None:
+                raise ValueError(f"Invalid unit index: {unit_index} (must be 0..{MAX_UNITS - 1})")
+            unit.master_all_abilities()
+            return 1
+
+        count = 0
+        for i in range(MAX_UNITS):
+            unit = self.get_unit(i)
+            if unit is not None and unit.job_id != 0:
+                unit.master_all_abilities()
+                count += 1
+        return count
 
     def save(self, output_path: str | Path | None = None, backup: bool = True) -> Path:
         """Recompute checksum, re-encrypt payload, and save to disk.

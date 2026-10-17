@@ -26,6 +26,8 @@ SAVE_COMMANDS = {
     "validate",
     "topup-stats",
     "set-difficulty",
+    "master-abilities",
+    "clan",
 }
 
 
@@ -82,9 +84,55 @@ def cmd_set_difficulty(args: argparse.Namespace) -> int:
     save.difficulty = target
     out_path = args.output if args.output else args.save_file
     save.save(out_path, backup=not args.no_backup)
-    print(
-        f"[SUCCESS] Slot {slot_idx + 1} difficulty set to {args.difficulty.capitalize()} and signed: {out_path}!"
-    )
+    print(f"[SUCCESS] Slot {slot_idx + 1} difficulty set to {args.difficulty.capitalize()} and signed: {out_path}!")
+    return 0
+
+
+def cmd_master_abilities(args: argparse.Namespace) -> int:
+    slot_idx = getattr(args, "slot", 1) - 1
+    save = FFTA2Save(args.save_file, slot=slot_idx)
+    target_unit = getattr(args, "unit", None)
+    unit_idx = target_unit - 1 if target_unit is not None else None
+
+    count = save.master_all_unit_abilities(unit_idx)
+    target_desc = f"Unit {target_unit}" if target_unit is not None else f"all {count} recruited clan units"
+
+    out_path = args.output if args.output else args.save_file
+    save.save(out_path, backup=not args.no_backup)
+    print(f"[SUCCESS] Mastered abilities for {target_desc} in Slot {slot_idx + 1}: {out_path}!")
+    return 0
+
+
+def cmd_clan(args: argparse.Namespace) -> int:
+    slot_idx = getattr(args, "slot", 1) - 1
+    save = FFTA2Save(args.save_file, slot=slot_idx)
+
+    actions = []
+    if args.all or args.gil is not None:
+        val = 99999999 if args.all or args.gil is None else args.gil
+        save.gil = val
+        actions.append(f"Gil={save.gil:,}")
+
+    if args.all or args.cp is not None:
+        val = 9999 if args.all or args.cp is None else args.cp
+        save.clan_points = val
+        actions.append(f"CP={save.clan_points}")
+
+    if args.all or args.talents:
+        save.clan_talents = (99, 99, 99, 99)
+        actions.append("Talents=99/99/99/99")
+
+    if args.all or args.privileges:
+        save.unlock_clan_privileges()
+        actions.append("64 Clan Privileges unlocked")
+
+    if not actions:
+        print("No clan options specified. Use --all, --gil, --cp, --privileges, or --talents.", file=sys.stderr)
+        return 1
+
+    out_path = args.output if args.output else args.save_file
+    save.save(out_path, backup=not args.no_backup)
+    print(f"[SUCCESS] Slot {slot_idx + 1} clan updated ({', '.join(actions)}): {out_path}!")
     return 0
 
 
@@ -354,6 +402,77 @@ def main() -> None:
     p_val = subparsers.add_parser("validate", help="Validate clan units against NDS UI crash conditions")
     p_val.add_argument("save_file", nargs="?", help=SAVE_HELP)
     p_val.set_defaults(func=cmd_validate)
+
+    # master-abilities
+    p_mab = subparsers.add_parser("master-abilities", help="Master all job abilities (AP max) for units on demand")
+    p_mab.add_argument("save_file", nargs="?", help=SAVE_HELP)
+    p_mab.add_argument(
+        "--unit",
+        "-u",
+        type=int,
+        choices=range(1, 25),
+        default=None,
+        help="Specific unit index to master (1..24; masters all recruited units if omitted)",
+    )
+    p_mab.add_argument(
+        "--slot",
+        type=int,
+        choices=[1, 2],
+        default=1,
+        help="Slot index to modify (1 or 2, default: 1)",
+    )
+    p_mab.add_argument("--output", "-o", help="Output save path (overwrites if omitted)")
+    p_mab.add_argument("--no-backup", action="store_true", help="Skip the pre-write timestamped backup snapshot")
+    p_mab.set_defaults(func=cmd_master_abilities)
+
+    # clan
+    p_clan = subparsers.add_parser("clan", help="Manage clan perks: max Gil, CP, talents, and Clan Privileges")
+    p_clan.add_argument("save_file", nargs="?", help=SAVE_HELP)
+    p_clan.add_argument(
+        "--all",
+        "-a",
+        action="store_true",
+        help="Max out Gil (99,999,999), CP (9999), Talents (99), and unlock all 64 Clan Privileges",
+    )
+    p_clan.add_argument(
+        "--gil",
+        "-g",
+        type=int,
+        nargs="?",
+        const=99999999,
+        default=None,
+        help="Set Gil balance (default if flag passed without value: 99,999,999)",
+    )
+    p_clan.add_argument(
+        "--cp",
+        type=int,
+        nargs="?",
+        const=9999,
+        default=None,
+        help="Set Clan Points (default if flag passed without value: 9999)",
+    )
+    p_clan.add_argument(
+        "--privileges",
+        "-p",
+        action="store_true",
+        help="Unlock all 64 Clan Privileges in the Judge menu",
+    )
+    p_clan.add_argument(
+        "--talents",
+        "-t",
+        action="store_true",
+        help="Set all four Clan Talents (Negotiation, Aptitude, Teamwork, Adaptability) to 99",
+    )
+    p_clan.add_argument(
+        "--slot",
+        type=int,
+        choices=[1, 2],
+        default=1,
+        help="Slot index to modify (1 or 2, default: 1)",
+    )
+    p_clan.add_argument("--output", "-o", help="Output save path (overwrites if omitted)")
+    p_clan.add_argument("--no-backup", action="store_true", help="Skip the pre-write timestamped backup snapshot")
+    p_clan.set_defaults(func=cmd_clan)
 
     args = parser.parse_args()
 

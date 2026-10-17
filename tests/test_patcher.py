@@ -680,6 +680,63 @@ def test_quicksave_deactivation():
     print("[PASS] Quicksave retired by slot id; slots and records untouched; banks mirrored.")
 
 
+def test_clan_and_abilities_idempotency() -> None:
+    sample_path = get_sample_save_path()
+    if not sample_path:
+        print("[SKIP] No valid save file found for clan idempotency test.")
+        return
+
+    with (
+        tempfile.NamedTemporaryFile(suffix=".sav", delete=False) as tf1,
+        tempfile.NamedTemporaryFile(suffix=".sav", delete=False) as tf2,
+    ):
+        path1 = Path(tf1.name)
+        path2 = Path(tf2.name)
+
+    try:
+        # Pass 1: Apply clan max stats, unlock privileges, and master abilities
+        save1 = FFTA2Save(sample_path)
+        save1.gil = 99999999
+        save1.clan_points = 9999
+        save1.clan_talents = (99, 99, 99, 99)
+        save1.unlock_clan_privileges()
+        count1 = save1.master_all_unit_abilities()
+        assert count1 > 0, "Should master at least 1 unit"
+        assert save1.gil == 99999999
+        assert save1.clan_points == 9999
+        assert save1.clan_talents == (99, 99, 99, 99)
+        save1.save(path1, backup=False)
+
+        # Verify round-trip load of Pass 1
+        loaded1 = FFTA2Save(path1)
+        assert loaded1.gil == 99999999
+        assert loaded1.clan_points == 9999
+        assert loaded1.clan_talents == (99, 99, 99, 99)
+        unit0 = loaded1.get_unit(0)
+        assert unit0 is not None
+        assert unit0._data[OFF_UNIT_ABILITIES_START] == 0xFF
+
+        # Pass 2: Re-apply exact same modifications to Pass 1 output (Idempotency check)
+        loaded1.gil = 99999999
+        loaded1.clan_points = 9999
+        loaded1.clan_talents = (99, 99, 99, 99)
+        loaded1.unlock_clan_privileges()
+        count2 = loaded1.master_all_unit_abilities()
+        assert count2 == count1
+        loaded1.save(path2, backup=False)
+
+        # Idempotency assertion: byte-for-byte identical output
+        bytes1 = path1.read_bytes()
+        bytes2 = path2.read_bytes()
+        assert bytes1 == bytes2, "Re-applying clan perks and master abilities must be 100% idempotent!"
+        print("[PASS] Clan perks, ability mastery, and idempotency verified.")
+    finally:
+        if path1.exists():
+            path1.unlink()
+        if path2.exists():
+            path2.unlink()
+
+
 if __name__ == "__main__":
     test_mappings()
     test_parse_simple_toml()
@@ -693,4 +750,5 @@ if __name__ == "__main__":
     test_validator_guards()
     test_difficulty_roundtrip()
     test_slot_record_mapping()
+    test_clan_and_abilities_idempotency()
     test_meta_squad_patcher()
