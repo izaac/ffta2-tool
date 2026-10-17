@@ -229,7 +229,7 @@ def test_meta_squad_patcher():
     assert save.plaintext[0x2814:0x2817] == b"\xff\xff\xff"
     assert save.plaintext[0x28AF:0x28B1] == b"\xff\xff"
 
-    # Verify ability mastery is NOT blanket-filled by default (0xFF fill black-screens Unit Info)
+    # Verify ability mastery is NOT blanket-filled by default (legal learning only)
     u0 = save.get_unit(0)
     assert u0 is not None
     assert u0.r_ability == 0x033C
@@ -295,14 +295,14 @@ def test_validator_guards():
     errors = [i for i in validate_unit(u0) if i.field == "shield_id" and i.severity == "ERROR"]
     assert errors, "Off-hand weapon without Dual Wield was not flagged as ERROR"
 
-    # Blanket 0xFF ability array -> ERROR
+    # Blanket 0xFF ability array -> WARNING (renders fine in melonDS, but not a legal state)
     u0.shield_id = 0x0000
     u0.p_ability = 0x035C
     u0._data[OFF_UNIT_ABILITIES_START:OFF_UNIT_ABILITIES_END] = b"\xff" * (
         OFF_UNIT_ABILITIES_END - OFF_UNIT_ABILITIES_START
     )
-    errors = [i for i in validate_unit(u0) if i.field == "abilities" and i.severity == "ERROR"]
-    assert errors, "All-0xFF ability array was not flagged as ERROR"
+    abil = [i for i in validate_unit(u0) if i.field == "abilities"]
+    assert abil and all(i.severity == "WARNING" for i in abil), "All-0xFF ability array must be a WARNING"
 
     # Dual Wield on a non-Hume -> WARNING
     non_hume = save.get_unit(1)

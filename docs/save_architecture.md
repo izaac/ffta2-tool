@@ -171,7 +171,7 @@ Within each 284-byte unit struct, the entire byte range from `+0x5A` to `+0x11B`
 
 - **Bit 7 (`0x80`)**: Mastered flag (`1` = Mastered, `0` = In progress).
 - **Bits 0-6 (`0x7F`)**: Current accumulated AP (in increments of 10 AP).
-- Writing `0xFF` across `+0x5A..+0x11B` fully masters all Reaction, Passive, and Action abilities legally for the unit without UI freezes or crashes.
+- Writing `0xFF` across `+0x5A..+0x11B` masters every Reaction, Passive, and Action ability without UI freezes or crashes (verified in melonDS on Unit Info, Change Jobs, Set Abilities, and the ability pickers). It is not a legal state: abilities of other races' jobs and unreleased `???` jobs also show as mastered, so the validator reports it as a WARNING.
 
 > [!NOTE]
 > Historical "Unit Info black screen" crashes were not caused by ability bytes, but by equipping off-hand shields or dual weapons on jobs without shield proficiency or Dual Wield active in `+0x58`.

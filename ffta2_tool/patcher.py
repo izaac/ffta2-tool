@@ -221,8 +221,8 @@ def apply_meta_squad(
     up stats to 115% god-roll maximums.
 
     Ability mastery is OFF by default: blanket-filling the unit ability array
-    (0x5A..0x11C) with 0xFF produces out-of-bounds ability indices that black-screen
-    the Unit Info UI. Only enable it for controlled experiments.
+    (0x5A..0x11C) with 0xFF does not crash the game, but it also masters abilities
+    of other races' jobs and unreleased "???" jobs, which no legal save can have.
     """
     target_builds = builds if builds is not None else META_SQUAD_BUILDS
 

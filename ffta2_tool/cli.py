@@ -306,7 +306,7 @@ def main() -> None:
     p_patch.add_argument(
         "--master-abilities",
         action="store_true",
-        help="Force-fill unit ability array with 0xFF (can black-screen Unit Info; off by default)",
+        help="Fill unit ability array with 0xFF (also masters other races' and '???' jobs; off by default)",
     )
     p_patch.add_argument("--no-jobs", action="store_true", help="Skip unlocking all jobs in clan data")
     p_patch.add_argument(

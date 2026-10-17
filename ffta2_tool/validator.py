@@ -31,7 +31,7 @@ WEAPON_ITEM_MAX = 0x011F
 # Support ability required to legally equip a weapon in the off-hand slot (+0x4E)
 DUAL_WIELD_ABILITY = 0x035C
 
-# A run of this many 0xFF bytes inside the ability array signals blanket corruption
+# A run of this many 0xFF bytes inside the ability array signals a partial blanket fill
 ABILITY_FF_RUN_WARNING = 16
 
 # Races that can learn each R/S ability, verified against the FFTA2 job ability
@@ -174,18 +174,21 @@ def validate_unit(unit: Unit) -> list[ValidationIssue]:
             ),
         )
 
-    # 5. Ability mastery array corruption (0x5A..0x11C)
+    # 5. Blanket ability mastery (0x5A..0x11C). Not a crash: an all-0xFF array renders
+    # Unit Info, Change Jobs, Set Abilities, and the ability pickers normally (melonDS,
+    # 2026-10-17). It is still not a legal state: abilities of other races' jobs and
+    # unreleased "???" jobs show as mastered.
     ability_region = bytes(raw[OFF_UNIT_ABILITIES_START:OFF_UNIT_ABILITIES_END])
     if ability_region:
         if all(b == 0xFF for b in ability_region):
             issues.append(
                 ValidationIssue(
                     idx,
-                    "ERROR",
+                    "WARNING",
                     "abilities",
                     (
                         f"Ability array 0x{OFF_UNIT_ABILITIES_START:02X}..0x{OFF_UNIT_ABILITIES_END:02X} "
-                        "is entirely 0xFF (blanket mastery); out-of-bounds ability indices black-screen Unit Info"
+                        "is entirely 0xFF (blanket mastery); other races' and '???' jobs show as mastered"
                     ),
                 )
             )
