@@ -29,6 +29,8 @@ OFF_UNIT_JOB_ID = 0x0E  # 1 byte (0x01 = Soldier)
 OFF_UNIT_RACE_ID = 0x0F  # 1 byte (0x01 = Hume)
 OFF_UNIT_PRIMARY_A_SET = 0x16  # 1 byte (Action Ability Set 1)
 OFF_UNIT_SECONDARY_A_SET = 0x17  # 1 byte (Action Ability Set 2)
+OFF_UNIT_JOB_MSG_ID = 0x18  # 16-bit (Job Title Message ID: 1000 + Job ID)
+OFF_UNIT_JOB_STR_ID = 0x1A  # 16-bit (Job String ID: 0x9470 + Job ID)
 OFF_UNIT_LEVEL = 0x22  # 1 byte
 OFF_UNIT_SPEED = 0x24  # 1 byte
 OFF_UNIT_MAX_HP = 0x3C  # 16-bit
@@ -52,6 +54,9 @@ OFF_UNIT_ABILITIES_END = 0x11C  # Byte offset of ability AP array end / unit bou
 # Clan Inventory in decrypted save payload
 INVENTORY_BASE = 0x1DFC
 MAX_INVENTORY_SLOTS = 400
+
+# Difficulty setting in the slot 0 payload (1 = Hard, 2 = Normal)
+OFF_DIFFICULTY = 0x3558
 
 # Minimum plausible FFTA2 save size (NDS saves are 512 KiB; floor filters junk matches)
 MIN_SAVE_SIZE = 0x10000
@@ -174,7 +179,10 @@ class Unit:
 
     @job_id.setter
     def job_id(self, val: int) -> None:
-        self._data[OFF_UNIT_JOB_ID] = val & 0xFF
+        job = val & 0xFF
+        self._data[OFF_UNIT_JOB_ID] = job
+        struct.pack_into("<H", self._data, OFF_UNIT_JOB_MSG_ID, 1000 + job)
+        struct.pack_into("<H", self._data, OFF_UNIT_JOB_STR_ID, 0x9470 + job)
 
     @property
     def race_id(self) -> int:
@@ -369,6 +377,17 @@ class FFTA2Save:
         name_bytes = self.raw_data[0x3C : 0x3C + 16]
         return decode_ffta2_string(name_bytes)
 
+    @property
+    def difficulty(self) -> int:
+        """Return the slot 0 difficulty (1 = Hard, 2 = Normal)."""
+        return self.plaintext[OFF_DIFFICULTY]
+
+    @difficulty.setter
+    def difficulty(self, value: int) -> None:
+        if value not in (1, 2):
+            raise ValueError("difficulty must be 1 (Hard) or 2 (Normal)")
+        self.plaintext[OFF_DIFFICULTY] = value
+
     def get_unit(self, index: int) -> Unit | None:
         if not (0 <= index < MAX_UNITS):
             return None
@@ -467,6 +486,16 @@ class FFTA2Save:
         # Re-encrypt
         final_data = bytearray(self.plaintext)
         encrypt_save_payload(final_data, self.keystream)
+
+        # Always refresh the load-screen preview, wipe quicksave, and mirror dual
+        # banks if full 512 KB image
+        if len(final_data) >= 0x40000:
+            from ffta2_tool.slots import SlotManager
+
+            sm = SlotManager(final_data)
+            sm.refresh_preview(0)
+            sm.deactivate_quicksave()
+            final_data = bytearray(sm.raw)
 
         if backup and out.exists():
             backup_path = create_backup_snapshot(out)

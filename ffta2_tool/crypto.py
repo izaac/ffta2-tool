@@ -56,7 +56,11 @@ def encrypt_save_payload(data: bytearray, key: bytes) -> bytearray:
     return data
 
 
-def calculate_checksum(plaintext_data: bytes | bytearray) -> int:
+def calculate_checksum(
+    plaintext_data: bytes | bytearray,
+    header_offset: int = RECORD_HEADER_OFFSET,
+    count: int = CHECKSUM_RANGE_COUNT,
+) -> int:
     """Calculate the exact 32-bit FFTA2 save checksum over plaintext.
 
     ARM9 assembly routine (0x0210D560 - 0x0210D590):
@@ -67,16 +71,15 @@ def calculate_checksum(plaintext_data: bytes | bytearray) -> int:
             sum = (sum + term) & 0xFFFFFFFF
         return sum
     """
-    count = CHECKSUM_RANGE_COUNT
-    min_len = RECORD_HEADER_OFFSET + count
+    min_len = header_offset + count
     if len(plaintext_data) < min_len:
         raise ValueError(f"Plaintext buffer too small ({len(plaintext_data)} bytes), requires at least {min_len} bytes")
     total = 0
 
-    # The checksum field at 0x01B8:0x01BC MUST be zeroed for checksum computation
+    # The checksum field (first 4 bytes of header) MUST be zeroed for checksum computation
     for i in range(count):
-        offset = RECORD_HEADER_OFFSET + i
-        b = 0 if offset < CHECKSUM_OFFSET + CHECKSUM_SIZE else plaintext_data[offset]
+        offset = header_offset + i
+        b = 0 if i < 4 else plaintext_data[offset]
 
         # Interpret as signed 8-bit integer (LDRSB in ARM)
         signed_b = b if b < 128 else b - 256

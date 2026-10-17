@@ -20,10 +20,10 @@ DEFAULT_META_SQUAD_BUILDS: list[dict[str, Any]] = [
         "job_id": 0x08,  # Parivir
         "primary_set": 0x08,  # Flair
         "secondary_set": 0x06,  # Chivalry (Paladin: Nurse, Saint Cross, Holy Blade)
-        "r_ability": 0x033C,  # Strike Back
-        "p_ability": 0x035C,  # Dual Wield
+        "r_ability": 0x033C,  # Strike Back (Hume Parivir)
+        "p_ability": 0x035C,  # Dual Wield (Hume Ninja only)
         "weapon_id": 0x0074,  # Hyakushiki-masamune (+78 Atk, Katana)
-        "shield_id": 0x0074,  # Hyakushiki-masamune (+78 Atk, Dual Wield off-hand)
+        "shield_id": 0x0000,  # None (Parivir safely single-wields; off-hand weapon black-screened Unit Info)
         "helm_id": 0x013F,  # Thief's Cap (+2 Speed)
         "armor_id": 0x015C,  # Ninja Gear (+24 Def, +4 Speed)
         "accessory_id": 0x0180,  # Ninja Tabi (+2 Move)
@@ -50,8 +50,8 @@ DEFAULT_META_SQUAD_BUILDS: list[dict[str, Any]] = [
         "job_id": 0x27,  # Red Mage
         "primary_set": 0x22,  # Red Magick (Doublecast, Cure, Cura, Protect)
         "secondary_set": 0x24,  # Summoning Magick (Maduin, Phoenix, Unicorn, Kirin)
-        "r_ability": 0x033A,  # Reflex
-        "p_ability": 0x0371,  # Elusion
+        "r_ability": 0x033A,  # Reflex (Viera Fencer)
+        "p_ability": 0x036A,  # Blood Price (Viera Spellblade)
         "weapon_id": 0x0050,  # Femme Fatale (+49 Atk, +2 Mag Rapier)
         "shield_id": 0x0000,  # None
         "helm_id": 0x0138,  # Ribbon (Complete status immunity)
@@ -65,8 +65,8 @@ DEFAULT_META_SQUAD_BUILDS: list[dict[str, Any]] = [
         "job_id": 0x16,  # Cannoneer
         "primary_set": 0x16,  # Cannonry (Ether Shell +60 MP, Mortar, Target)
         "secondary_set": 0x11,  # Warding (Defender: Aura Auto-Life+Regen, Meltdown)
-        "r_ability": 0x033C,  # Strike Back
-        "p_ability": 0x0371,  # Elusion
+        "r_ability": 0x033C,  # Strike Back (Bangaa Gladiator)
+        "p_ability": 0x0353,  # Attack Up (Bangaa Templar)
         "weapon_id": 0x00F0,  # Rocket Punch (Hand Cannon)
         "shield_id": 0x0000,  # None
         "helm_id": 0x013F,  # Thief's Cap (+2 Speed)
@@ -95,8 +95,8 @@ DEFAULT_META_SQUAD_BUILDS: list[dict[str, Any]] = [
         "job_id": 0x30,  # Fusilier
         "primary_set": 0x29,  # Gunmanship (Stopshot, Charmshot)
         "secondary_set": 0x2A,  # Acrobatics (Juggler: Smile Toss Quicken)
-        "r_ability": 0x033E,  # Return Fire
-        "p_ability": 0x0371,  # Elusion
+        "r_ability": 0x033E,  # Return Fire (Moogle Juggler)
+        "p_ability": 0x0361,  # Concentration (Moogle Fusilier)
         "weapon_id": 0x00D4,  # Peacemaker (8-Range Gun)
         "shield_id": 0x0000,  # None
         "helm_id": 0x013F,  # Thief's Cap (+2 Speed)
@@ -210,16 +210,19 @@ def apply_meta_squad(
     builds: list[dict[str, Any]] | None = None,
     inject_inventory: bool = True,
     inventory_count: int = 50,
-    master_abilities: bool = True,
+    master_abilities: bool = False,
     unlock_jobs: bool = True,
     topup_stats: bool = True,
 ) -> None:
     """Apply verified meta squad builds to the first 6 clan members.
 
     Optionally injects 50x of ability-teaching weapons/armor into the clan inventory bag,
-    unlocks all standard and hidden job classes in clan data, sets the full ability array
-    (0x5A..0x11C) to master all skills safely without black-screening Unit Info,
-    and non-destructively tops up stats to 115% god-roll maximums.
+    unlocks all standard and hidden job classes in clan data, and non-destructively tops
+    up stats to 115% god-roll maximums.
+
+    Ability mastery is OFF by default: blanket-filling the unit ability array
+    (0x5A..0x11C) with 0xFF produces out-of-bounds ability indices that black-screen
+    the Unit Info UI. Only enable it for controlled experiments.
     """
     target_builds = builds if builds is not None else META_SQUAD_BUILDS
 

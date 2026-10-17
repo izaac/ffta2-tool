@@ -32,7 +32,7 @@ from ffta2_tool.save import (
     auto_detect_save,
     create_backup_snapshot,
 )
-from ffta2_tool.validator import validate_save
+from ffta2_tool.validator import SUPPORT_ABILITY_RACES, validate_save, validate_unit
 
 
 def get_sample_save_path() -> Path | None:
@@ -58,6 +58,7 @@ def test_mappings():
     assert is_shield_capable(0x08) is False  # Parivir cannot equip shield
     assert is_valid_item_id(0x0050) is True
     assert is_valid_item_id(0x0500) is False
+    assert SUPPORT_ABILITY_RACES[0x035C] == {1}, "Dual Wield must be Hume-only"
 
 
 def test_load_builds():
@@ -185,7 +186,16 @@ def test_meta_squad_patcher():
         print("[SKIP] No sample save found to test patcher.")
         return
 
+    import struct
+
+    from ffta2_tool.slots import SlotManager, calculate_metadata_checksum
+
     save = FFTA2Save(sample_path)
+    u0 = save.get_unit(0)
+    assert u0 is not None
+    original_abilities = bytes(u0._data[OFF_UNIT_ABILITIES_START:OFF_UNIT_ABILITIES_END])
+    original_preview = SlotManager(sample_path.read_bytes()).get_slot_preview(0)
+
     apply_meta_squad(save, inject_inventory=True)
 
     # Verify no validation errors
@@ -218,12 +228,14 @@ def test_meta_squad_patcher():
     assert save.plaintext[0x2814:0x2817] == b"\xff\xff\xff"
     assert save.plaintext[0x28AF:0x28B1] == b"\xff\xff"
 
-    # Verify ability mastery bounds (0x5A..0x11C mastered across entire unit ability array)
+    # Verify ability mastery is NOT blanket-filled by default (0xFF fill black-screens Unit Info)
     u0 = save.get_unit(0)
     assert u0 is not None
     assert u0.r_ability == 0x033C
     assert u0.p_ability == 0x035C
-    assert all(b == 0xFF for b in u0._data[OFF_UNIT_ABILITIES_START:OFF_UNIT_ABILITIES_END])
+    assert bytes(u0._data[OFF_UNIT_ABILITIES_START:OFF_UNIT_ABILITIES_END]) == original_abilities, (
+        "Default patch must leave the per-ability AP array untouched"
+    )
 
     # Verify write and cryptographic resigning
     with tempfile.NamedTemporaryFile(suffix=".sav", delete=False) as tmp:
@@ -240,10 +252,146 @@ def test_meta_squad_patcher():
         u0 = reloaded.get_unit(0)
         assert u0.job_id == 0x08  # Parivir
         assert u0.weapon_id == 0x0074  # Hyakushiki-masamune
-        assert u0.shield_id == 0x0074  # Hyakushiki-masamune
+        assert u0.shield_id == 0x0000  # Single-wield (off-hand katana black-screened Unit Info)
         assert u0.r_ability == 0x033C  # Strike Back
-        assert u0.p_ability == 0x035C  # Dual Wield
+        assert u0.p_ability == 0x035C  # Dual Wield (Hume only)
+
+        # Verify the load-screen preview follows the patched payload
+        sm = SlotManager(bytearray(patched_raw))
+        assert sm.verify_slot(0)[0], "Slot 0 checksum invalid after save"
+        preview = sm.get_slot_preview(0)
+        assert preview["leader_job"] == 0x08, f"Stale preview job 0x{preview['leader_job']:02X}"
+        assert preview["leader_name"] == "Luso"
+        assert preview["member_count"] == 6
+        assert preview["play_time"] == original_preview["play_time"]
+        assert preview["location_id"] == original_preview["location_id"]
+        assert preview["clan_title"] == original_preview["clan_title"]
+        for copy_base in (0x0000, 0x00DC):
+            stored = struct.unpack_from("<I", sm.raw, copy_base)[0]
+            calculated = calculate_metadata_checksum(sm.raw[copy_base : copy_base + 0xDC])
+            assert stored == calculated, f"Metadata checksum invalid at 0x{copy_base:04X}"
+
         print(f"[PASS] Successfully patched, signed, and re-verified meta squad on {tmp_path}!")
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
+def test_validator_guards():
+    """Verify validator flags black-screen conditions and illegal R/P learn sources."""
+    sample_path = get_sample_save_path()
+    if not sample_path:
+        print("[SKIP] No sample save found to test validator guards.")
+        return
+
+    save = FFTA2Save(sample_path)
+    u0 = save.get_unit(0)
+    assert u0 is not None
+
+    # Off-hand weapon without Dual Wield -> ERROR (known Unit Info black screen)
+    u0.shield_id = 0x0074
+    u0.p_ability = 0x0000
+    errors = [i for i in validate_unit(u0) if i.field == "shield_id" and i.severity == "ERROR"]
+    assert errors, "Off-hand weapon without Dual Wield was not flagged as ERROR"
+
+    # Blanket 0xFF ability array -> ERROR
+    u0.shield_id = 0x0000
+    u0.p_ability = 0x035C
+    u0._data[OFF_UNIT_ABILITIES_START:OFF_UNIT_ABILITIES_END] = b"\xff" * (
+        OFF_UNIT_ABILITIES_END - OFF_UNIT_ABILITIES_START
+    )
+    errors = [i for i in validate_unit(u0) if i.field == "abilities" and i.severity == "ERROR"]
+    assert errors, "All-0xFF ability array was not flagged as ERROR"
+
+    # Dual Wield on a non-Hume -> WARNING
+    non_hume = save.get_unit(1)
+    assert non_hume is not None
+    assert non_hume._data[0x0F] != 1, "Expected slot 1 to be a non-Hume for this check"
+    non_hume.p_ability = 0x035C
+    warnings = [i for i in validate_unit(non_hume) if i.field == "p_ability" and "not learnable" in i.message]
+    assert warnings, "Dual Wield on a non-Hume was not flagged"
+
+    # Elusion has no player learn source -> WARNING
+    u0.p_ability = 0x0371
+    warnings = [i for i in validate_unit(u0) if i.field == "p_ability" and "NPC-only" in i.message]
+    assert warnings, "Elusion was not flagged as NPC-only"
+
+    print("[PASS] Validator flags black-screen conditions and illegal R/P learn sources.")
+
+
+def test_difficulty_roundtrip():
+    """Verify the difficulty flag and load-screen label survive save/reload."""
+    import struct
+
+    from ffta2_tool.slots import SlotManager, calculate_metadata_checksum
+
+    sample_path = get_sample_save_path()
+    if not sample_path:
+        print("[SKIP] No sample save found to test difficulty roundtrip.")
+        return
+
+    original_preview = SlotManager(sample_path.read_bytes()).get_slot_preview(0)
+    save = FFTA2Save(sample_path)
+    u0_before = save.get_unit(0)
+    assert u0_before is not None
+    build_before = (
+        u0_before.job_id,
+        u0_before.weapon_id,
+        u0_before.shield_id,
+        u0_before.r_ability,
+        u0_before.p_ability,
+    )
+
+    try:
+        save.difficulty = 3
+        raise AssertionError("difficulty setter accepted an invalid value")
+    except ValueError:
+        pass
+
+    save.difficulty = 1
+    assert save.difficulty == 1
+
+    with tempfile.NamedTemporaryFile(suffix=".sav", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        save.save(tmp_path, backup=False)
+        raw = tmp_path.read_bytes()
+        reloaded = FFTA2Save(tmp_path)
+        assert reloaded.difficulty == 1
+
+        u0_after = reloaded.get_unit(0)
+        assert u0_after is not None
+        assert (
+            u0_after.job_id,
+            u0_after.weapon_id,
+            u0_after.shield_id,
+            u0_after.r_ability,
+            u0_after.p_ability,
+        ) == build_before, "Changing difficulty must not touch unit data"
+
+        sm = SlotManager(raw)
+        assert sm.verify_slot(0)[0], "Slot 0 checksum invalid after difficulty change"
+        preview = sm.get_slot_preview(0)
+        assert preview["difficulty"] == 1
+        assert preview["difficulty_label"] == "Hard"
+        assert sm.raw[0x0000 + 0x2C + 36] == 1, "Preview byte 36 must be 1 for Hard mode badge"
+        assert preview["play_time"] == original_preview["play_time"]
+        assert preview["location_id"] & 0xFF == 1
+        assert preview["clan_title"] & 0xFF == original_preview["clan_title"] & 0xFF
+        for copy_base in (0x0000, 0x00DC):
+            stored = struct.unpack_from("<I", sm.raw, copy_base)[0]
+            calculated = calculate_metadata_checksum(sm.raw[copy_base : copy_base + 0xDC])
+            assert stored == calculated, f"Metadata checksum invalid at 0x{copy_base:04X}"
+
+        # Test set_slot_difficulty directly
+        sm.set_slot_difficulty(0, 2)
+        assert sm.get_slot_preview(0)["difficulty"] == 2
+        assert sm.get_slot_preview(0)["difficulty_label"] == "Normal"
+        assert sm.raw[0x0000 + 0x2C + 36] == 0
+        sm.set_slot_difficulty(0, 1)
+        assert sm.get_slot_preview(0)["difficulty"] == 1
+        assert sm.raw[0x0000 + 0x2C + 36] == 1
+        print("[PASS] Difficulty flag roundtrip and Hard preview verified.")
     finally:
         if tmp_path.exists():
             tmp_path.unlink()
@@ -325,6 +473,35 @@ def test_god_stats():
     print("[PASS] 115% God Roll calculations and non-destructive top-up verified.")
 
 
+def test_quicksave_deactivation():
+    """Verify SlotManager always wipes quicksave slot and record header."""
+    import struct
+
+    from ffta2_tool.slots import SlotManager, calculate_metadata_checksum
+
+    raw = bytearray(0x80000)
+    # Mark quicksave active in metadata copy 1
+    raw[0x84 + 4] = 1
+    # Add dummy header at 0x69C8
+    raw[0x69C8:0x69D0] = b"\x01\x02\x03\x04\x05\x06\x07\x08"
+
+    sm = SlotManager(raw)
+    sm.deactivate_quicksave()
+
+    # Verify quicksave is inactive in copy 1 and copy 2
+    for base in (0x0000, 0x00DC):
+        assert sm.raw[base + 0x84 + 4] == 0, f"Quicksave active flag not zeroed in copy at 0x{base:04X}"
+        stored_chk = struct.unpack_from("<I", sm.raw, base)[0]
+        calc_chk = calculate_metadata_checksum(sm.raw[base : base + 0xDC])
+        assert stored_chk == calc_chk, "Metadata checksum invalid after quicksave wipe"
+
+    # Verify quicksave record header is cleared
+    assert sm.raw[0x69C8:0x69D0] == b"\x00" * 8
+    # Verify bank 2 is mirrored
+    assert sm.raw[:0x40000] == sm.raw[0x40000:0x80000]
+    print("[PASS] Quicksave deactivation and dual-bank mirroring verified.")
+
+
 if __name__ == "__main__":
     test_mappings()
     test_parse_simple_toml()
@@ -334,4 +511,7 @@ if __name__ == "__main__":
     test_auto_detect_save()
     test_hardening()
     test_god_stats()
+    test_quicksave_deactivation()
+    test_validator_guards()
+    test_difficulty_roundtrip()
     test_meta_squad_patcher()

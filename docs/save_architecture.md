@@ -96,6 +96,10 @@ Party units are stored starting at offset `0x0238` with a fixed stride of `0x11C
 | `+0x0D` | uint8 | Character / Special Unit ID (e.g. `0x1F` = Luso) |
 | `+0x0E` | uint8 | Job ID (e.g. `0x01` = Soldier) |
 | `+0x0F` | uint8 | Race / Species ID (e.g. `0x03` = Hume) |
+| `+0x16` | uint8 | Primary Action Ability Set ID |
+| `+0x17` | uint8 | Secondary Action Ability Set ID |
+| `+0x18` | uint16 | Job Title Message ID (`1000 + job_id`, used by battle turn queue) |
+| `+0x1A` | uint16 | Job String ID (`0x9470 + job_id`) |
 | `+0x22` | uint8 | Unit Level |
 | `+0x3C` | uint16 | Max HP |
 | `+0x3E` | uint16 | Current HP |

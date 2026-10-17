@@ -39,3 +39,6 @@ select = [
     "C4",
     "SIM",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["E402"]

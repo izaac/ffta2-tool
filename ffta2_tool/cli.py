@@ -17,7 +17,16 @@ from ffta2_tool.validator import validate_save, validate_unit
 
 SAVE_HELP = "Path to .sav file (auto-detected from FFTA2_Backups and mounted media if omitted)"
 
-SAVE_COMMANDS = {"verify", "info", "inventory", "set-weapon", "patch-meta-squad", "validate", "topup-stats"}
+SAVE_COMMANDS = {
+    "verify",
+    "info",
+    "inventory",
+    "set-weapon",
+    "patch-meta-squad",
+    "validate",
+    "topup-stats",
+    "set-difficulty",
+}
 
 
 def resolve_save_file(requested: str | None) -> str | None:
@@ -66,6 +75,16 @@ def cmd_topup_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_set_difficulty(args: argparse.Namespace) -> int:
+    save = FFTA2Save(args.save_file)
+    target = 1 if args.difficulty == "hard" else 2
+    save.difficulty = target
+    out_path = args.output if args.output else args.save_file
+    save.save(out_path, backup=not args.no_backup)
+    print(f"[SUCCESS] Difficulty set to {args.difficulty.capitalize()} and signed: {out_path}!")
+    return 0
+
+
 def cmd_patch_meta_squad(args: argparse.Namespace) -> int:
     save = FFTA2Save(args.save_file)
 
@@ -76,11 +95,14 @@ def cmd_patch_meta_squad(args: argparse.Namespace) -> int:
         for iss in pre_issues:
             print(f"  [{iss.severity}] Unit {iss.unit_index} ({iss.field}): {iss.message}")
 
+    if getattr(args, "difficulty", None):
+        save.difficulty = 1 if args.difficulty == "hard" else 2
+
     apply_meta_squad(
         save,
         inject_inventory=not args.no_inventory,
         inventory_count=args.count,
-        master_abilities=not args.no_abilities,
+        master_abilities=args.master_abilities,
         unlock_jobs=not args.no_jobs,
         topup_stats=not args.no_god_stats,
     )
@@ -129,6 +151,9 @@ def cmd_info(args: argparse.Namespace) -> int:
     save = FFTA2Save(args.save_file)
     print(f"=== FFTA2 Save: {args.save_file} ===")
     print(f"Slot 0 Leader Name: {save.slot_0_player_name}")
+    diff_val = save.difficulty
+    diff_str = "Hard" if diff_val == 1 else ("Normal" if diff_val == 2 else f"Unknown ({diff_val})")
+    print(f"Difficulty:         {diff_str}")
 
     is_valid, stored, calc = verify_save_checksum(save.raw_data)
     print(f"Checksum: 0x{stored:08X} ({'VALID' if is_valid else 'INVALID'})")
@@ -265,7 +290,11 @@ def main() -> None:
     p_patch.add_argument(
         "--no-inventory", action="store_true", help="Skip injecting ability learning gear into clan inventory"
     )
-    p_patch.add_argument("--no-abilities", action="store_true", help="Skip mastering all abilities for units")
+    p_patch.add_argument(
+        "--master-abilities",
+        action="store_true",
+        help="Force-fill unit ability array with 0xFF (can black-screen Unit Info; off by default)",
+    )
     p_patch.add_argument("--no-jobs", action="store_true", help="Skip unlocking all jobs in clan data")
     p_patch.add_argument(
         "--no-god-stats", action="store_true", help="Skip topping up unit stats to 115%% god-roll maximums"
