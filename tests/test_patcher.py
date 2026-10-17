@@ -680,61 +680,111 @@ def test_quicksave_deactivation():
     print("[PASS] Quicksave retired by slot id; slots and records untouched; banks mirrored.")
 
 
-def test_clan_and_abilities_idempotency() -> None:
-    sample_path = get_sample_save_path()
-    if not sample_path:
-        print("[SKIP] No valid save file found for clan idempotency test.")
-        return
+def _two_slot_example() -> bytes:
+    """Example save with Slot 1 copied into the empty Slot 2 (first free position)."""
+    from ffta2_tool.slots import SlotManager
 
-    with (
-        tempfile.NamedTemporaryFile(suffix=".sav", delete=False) as tf1,
-        tempfile.NamedTemporaryFile(suffix=".sav", delete=False) as tf2,
-    ):
-        path1 = Path(tf1.name)
-        path2 = Path(tf2.name)
+    sm = SlotManager(EXAMPLE_SAVE.read_bytes())
+    _, seed, payload = sm.get_slot_payload(0)
+    sm.put_slot_payload(1, payload, seed=seed, preview_source=sm.get_entry_bytes(0))
+    return bytes(sm.raw)
 
+
+def test_clan_perks():
+    from ffta2_tool.save import CLAN_PRIVILEGE_MASK, OFF_CLAN_PRIVILEGES_START
+
+    save = FFTA2Save(EXAMPLE_SAVE)
+    # Offsets match the in-game Clan Info screen of the example save
+    assert (save.gil, save.clan_points, save.clan_talents) == (3920, 16, (5, 3, 5, 6))
+
+    save.gil = 10**9
+    save.clan_points = 10**6
+    save.clan_talents = (150, -1, 99, 7)
+    assert (save.gil, save.clan_points, save.clan_talents) == (99999999, 9999, (99, 0, 99, 7))
+
+    # Unlocking ORs the privilege mask: owned privileges and non-privilege bits survive
+    base = OFF_CLAN_PRIVILEGES_START
+    save.plaintext[base] = 0x05  # bits 0..3 are not privileges
+    save.plaintext[base + 5] = 0xA0  # bits 4..7 are not privileges
+    save.unlock_clan_privileges()
+    field = bytes(save.plaintext[base : base + len(CLAN_PRIVILEGE_MASK)])
+    assert field[0] == 0xF5 and field[5] == 0xAF, field.hex()
+    assert all(b & m == m for b, m in zip(field, CLAN_PRIVILEGE_MASK, strict=True))
+
+    # master-abilities --unit must refuse an empty unit slot instead of writing 0xFF into it
+    empty = next(i for i in range(24) if not save.get_unit(i).is_recruited)
+    before = bytes(save.plaintext)
     try:
-        # Pass 1: Apply clan max stats, unlock privileges, and master abilities
-        save1 = FFTA2Save(sample_path)
-        save1.gil = 99999999
-        save1.clan_points = 9999
-        save1.clan_talents = (99, 99, 99, 99)
-        save1.unlock_clan_privileges()
-        count1 = save1.master_all_unit_abilities()
-        assert count1 > 0, "Should master at least 1 unit"
-        assert save1.gil == 99999999
-        assert save1.clan_points == 9999
-        assert save1.clan_talents == (99, 99, 99, 99)
-        save1.save(path1, backup=False)
+        save.master_all_unit_abilities(empty)
+        raise AssertionError("Mastering an empty unit slot must raise ValueError")
+    except ValueError:
+        pass
+    assert bytes(save.plaintext) == before
+    assert save.master_all_unit_abilities() == 6
+    print("[PASS] Clan perks clamp, privileges OR the mask, empty unit slots are refused.")
 
-        # Verify round-trip load of Pass 1
-        loaded1 = FFTA2Save(path1)
-        assert loaded1.gil == 99999999
-        assert loaded1.clan_points == 9999
-        assert loaded1.clan_talents == (99, 99, 99, 99)
-        unit0 = loaded1.get_unit(0)
-        assert unit0 is not None
-        assert unit0._data[OFF_UNIT_ABILITIES_START] == 0xFF
 
-        # Pass 2: Re-apply exact same modifications to Pass 1 output (Idempotency check)
-        loaded1.gil = 99999999
-        loaded1.clan_points = 9999
-        loaded1.clan_talents = (99, 99, 99, 99)
-        loaded1.unlock_clan_privileges()
-        count2 = loaded1.master_all_unit_abilities()
-        assert count2 == count1
-        loaded1.save(path2, backup=False)
+def test_operations_idempotent():
+    """Every save-modifying operation, applied twice through a save/load cycle, is byte-stable."""
+    from ffta2_tool.slots import SlotManager
+    from ffta2_tool.stats import topup_clan_stats
 
-        # Idempotency assertion: byte-for-byte identical output
-        bytes1 = path1.read_bytes()
-        bytes2 = path2.read_bytes()
-        assert bytes1 == bytes2, "Re-applying clan perks and master abilities must be 100% idempotent!"
-        print("[PASS] Clan perks, ability mastery, and idempotency verified.")
-    finally:
-        if path1.exists():
-            path1.unlink()
-        if path2.exists():
-            path2.unlink()
+    def via_save(slot, fn):
+        def op(path):
+            save = FFTA2Save(path, slot=slot)
+            fn(save)
+            save.save(path, backup=False)
+
+        return op
+
+    def via_slots(fn):
+        def op(path):
+            sm = SlotManager(path.read_bytes())
+            fn(sm)
+            sm.save_to_file(path)
+
+        return op
+
+    def copy_slot(sm):
+        _, seed, payload = sm.get_slot_payload(0)
+        sm.put_slot_payload(1, payload, seed=seed, preview_source=sm.get_entry_bytes(0))
+
+    def set_weapon(save):
+        save.get_unit(0).weapon_id = 0x0074
+        save.sync_equipped_to_inventory()
+
+    def clan_all(save):
+        save.gil, save.clan_points, save.clan_talents = 99999999, 9999, (99, 99, 99, 99)
+        save.unlock_clan_privileges()
+
+    def set_hard(save):
+        save.difficulty = 1
+
+    ops = {
+        "load/save": via_save(0, lambda save: None),
+        "set-weapon": via_save(0, set_weapon),
+        "patch-meta-squad": via_save(0, apply_meta_squad),
+        "topup-stats": via_save(0, topup_clan_stats),
+        "set-difficulty slot 2": via_save(1, set_hard),
+        "master-abilities": via_save(0, FFTA2Save.master_all_unit_abilities),
+        "clan --all": via_save(1, clan_all),
+        "slots set-difficulty": via_slots(lambda sm: sm.set_slot_difficulty(1, 2)),
+        "slots wipe-quicksave": via_slots(SlotManager.deactivate_quicksave),
+        "slots copy 1->2": via_slots(copy_slot),
+    }
+    source = _two_slot_example()
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, op in ops.items():
+            path = Path(tmp) / "op.sav"
+            path.write_bytes(source)
+            op(path)
+            once = path.read_bytes()
+            op(path)
+            assert path.read_bytes() == once, f"{name} is not idempotent"
+            assert len(once) == len(source), f"{name} changed the file size"
+            sm = SlotManager(once)
+            assert sm.verify_slot(0)[0] and sm.verify_slot(1)[0], f"{name} broke a slot checksum"
+    print(f"[PASS] {len(ops)} save operations are byte-for-byte idempotent and keep both slots valid.")
 
 
 if __name__ == "__main__":
@@ -750,5 +800,6 @@ if __name__ == "__main__":
     test_validator_guards()
     test_difficulty_roundtrip()
     test_slot_record_mapping()
-    test_clan_and_abilities_idempotency()
+    test_clan_perks()
+    test_operations_idempotent()
     test_meta_squad_patcher()

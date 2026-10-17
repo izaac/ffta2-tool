@@ -124,7 +124,7 @@ def cmd_clan(args: argparse.Namespace) -> int:
 
     if args.all or args.privileges:
         save.unlock_clan_privileges()
-        actions.append("64 Clan Privileges unlocked")
+        actions.append("all Clan Privileges unlocked")
 
     if not actions:
         print("No clan options specified. Use --all, --gil, --cp, --privileges, or --talents.", file=sys.stderr)
@@ -432,7 +432,7 @@ def main() -> None:
         "--all",
         "-a",
         action="store_true",
-        help="Max out Gil (99,999,999), CP (9999), Talents (99), and unlock all 64 Clan Privileges",
+        help="Max out Gil (99,999,999), CP (9999), Talents (99), and unlock all Clan Privileges",
     )
     p_clan.add_argument(
         "--gil",
@@ -455,7 +455,7 @@ def main() -> None:
         "--privileges",
         "-p",
         action="store_true",
-        help="Unlock all 64 Clan Privileges in the Judge menu",
+        help="Unlock all Clan Privileges in the Judge menu (other flag bits are preserved)",
     )
     p_clan.add_argument(
         "--talents",
@@ -487,7 +487,11 @@ def main() -> None:
             )
             sys.exit(1)
 
-    sys.exit(args.func(args))
+    try:
+        sys.exit(args.func(args))
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

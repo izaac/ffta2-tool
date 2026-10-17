@@ -66,7 +66,12 @@ OFF_DIFFICULTY = 0x2958
 OFF_GIL = 0x281C  # uint32, max 99,999,999 (RAM 0x0212D6FC)
 OFF_CLAN_POINTS = 0x2820  # uint16, max 9,999 (RAM 0x0212D700)
 OFF_CLAN_TALENTS = 0x2824  # 4 bytes: Negotiation, Aptitude, Teamwork, Adaptability (RAM 0x0212D704)
-OFF_CLAN_PRIVILEGES_START = 0x2937  # 9 bytes bitfield for all 64 Clan Privileges (RAM 0x0212D817)
+OFF_CLAN_PRIVILEGES_START = 0x2937  # 9-byte Clan Privilege bitfield (RAM 0x0212D817)
+# Privilege bits within those 9 bytes. Verified in melonDS (2026-10-17) by poking RAM and
+# opening Judge Menu > Clan Privileges: the mask shows all 56 named privileges; 0x2937
+# bits 0..3 are not privileges (the list stays empty), and 0x293C bits 4..7 / 0x293D
+# bits 0..1 show up as nameless "-" entries. Bits outside the mask are never touched.
+CLAN_PRIVILEGE_MASK = bytes.fromhex("f0ffffffff0ffcffff")
 
 # Minimum plausible FFTA2 save size (NDS saves are 512 KiB; floor filters junk matches)
 MIN_SAVE_SIZE = 0x10000
@@ -190,6 +195,11 @@ class Unit:
     @property
     def character_id(self) -> int:
         return self._data[OFF_UNIT_CHAR_ID]
+
+    @property
+    def is_recruited(self) -> bool:
+        """True when the slot holds a clan member (same test as the load-screen member count)."""
+        return self._data[OFF_UNIT_CHAR_ID] != 0 or self._data[OFF_UNIT_JOB_ID] != 0
 
     @property
     def job_id(self) -> int:
@@ -545,10 +555,9 @@ class FFTA2Save:
         self.plaintext[OFF_CLAN_TALENTS : OFF_CLAN_TALENTS + 4] = clamped
 
     def unlock_clan_privileges(self) -> None:
-        """Unlock all 64 Clan Privileges in the Judge menu."""
-        self.plaintext[OFF_CLAN_PRIVILEGES_START] = 0xFF
-        self.plaintext[OFF_CLAN_PRIVILEGES_START + 1 : OFF_CLAN_PRIVILEGES_START + 5] = b"\xff\xff\xff\xff"
-        self.plaintext[OFF_CLAN_PRIVILEGES_START + 5 : OFF_CLAN_PRIVILEGES_START + 9] = struct.pack("<I", 0xFFFFFC0F)
+        """Unlock every Clan Privilege in the Judge menu, preserving bits outside the mask."""
+        for i, mask in enumerate(CLAN_PRIVILEGE_MASK):
+            self.plaintext[OFF_CLAN_PRIVILEGES_START + i] |= mask
 
     def master_all_unit_abilities(self, unit_index: int | None = None) -> int:
         """Master all abilities for a specific unit (0..23) or all recruited clan units.
@@ -559,13 +568,15 @@ class FFTA2Save:
             unit = self.get_unit(unit_index)
             if unit is None:
                 raise ValueError(f"Invalid unit index: {unit_index} (must be 0..{MAX_UNITS - 1})")
+            if not unit.is_recruited:
+                raise ValueError(f"Unit slot {unit_index + 1} is empty (no recruited clan member)")
             unit.master_all_abilities()
             return 1
 
         count = 0
         for i in range(MAX_UNITS):
             unit = self.get_unit(i)
-            if unit is not None and unit.job_id != 0:
+            if unit is not None and unit.is_recruited:
                 unit.master_all_abilities()
                 count += 1
         return count
