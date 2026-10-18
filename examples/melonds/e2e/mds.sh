@@ -18,8 +18,16 @@
 # which once filled a 32 GiB tmpfs and made every screenshot/save write fail).
 # shellcheck source=/dev/null
 set -eu
-export PATH="/nix/store/vkhy10hwyfzlblr4748qdxn8zx88gr34-xdotool-3.20211022.1/bin:/nix/store/vdpfrvny2hz0cd14yrsnk11xns9n35yp-xorg-server-21.1.24/bin:/nix/store/b1k97zdkdshx5hm95r1g9cfdgl22j4fm-gdb-17.2/bin:/nix/store/g10qxbm4svmxmg2niwbgmxgcb89jxwwk-imagemagick-7.1.2-32/bin:$PATH"
-REPO_ROOT="/home/izaac/repos/ffta2-tool"
+# Tools must be on PATH. MDS_EXTRA_PATH prepends extra directories when the
+# ambient environment does not carry them, e.g. on NixOS:
+#   MDS_EXTRA_PATH=/nix/store/...-xdotool/bin:/nix/store/...-imagemagick/bin mds.sh ...
+PATH="${MDS_EXTRA_PATH:+$MDS_EXTRA_PATH:}$PATH"
+REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
+missing=""
+for tool in xdotool Xvfb gdb magick import python3; do
+    command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+done
+[ -z "$missing" ] || { echo "mds.sh: missing tools:$missing (put them on PATH or set MDS_EXTRA_PATH)" >&2; exit 1; }
 ROM_PATH="${ROM_PATH:-/tmp/opencode/ffta2.nds}"
 cmd="$1"; shift
 case "$cmd" in

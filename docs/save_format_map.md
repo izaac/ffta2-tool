@@ -1,4 +1,4 @@
-# FFTA2 Save Format Map — Addresses, Offsets and How They Relate
+# FFTA2 Save Format Map: Addresses, Offsets and How They Relate
 
 One page that collects every verified address in one place, with the formulas that
 connect them. Sources: ARM9/overlay disassembly, melonDS RAM pokes and cross-checks
@@ -36,7 +36,7 @@ badge byte +0x24 bit 0 = Hard.
   (counted as units with job_id != 0), difficulty badge. Editing the payload and
   running `slots.py` preview refresh keeps it in sync.
 
-## 2. Decryption (crypto.py) — exact game algorithm
+## 2. Decryption (crypto.py), exact game algorithm
 
 - Keystream: LCG `state = (5 * state + 1) & 0xFF`, seeded from the record header
   seed field (header offset 6, i.e. u32 at record_base + 6); one keystream byte per

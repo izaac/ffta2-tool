@@ -48,3 +48,14 @@ Copy `config.example.toml` to `config.toml` (or `~/.config/ffta2-tool/config.tom
 - [MelonDS Headless Debugging](docs/melonds_headless_debugging.md): Automated emulation testing, headless Xvfb runner, load screen verification and battle driving rules.
 - [MelonDS E2E Walkthrough](examples/melonds/e2e/WALKTHROUGH.md): Replayable in-game proofs of rename, inject, full roster, a won battle, the world map save and a cold reload.
 - [Save Format Map](docs/save_format_map.md): Every verified address, including the in-battle RAM layout.
+
+## Development
+
+Nix dev shell with every downstream tool preloaded (python3, ruff, shellcheck, just, melonDS, xdotool, Xvfb, gdb, ImageMagick):
+
+```console
+$ nix develop        # flakes, see flake.nix
+$ nix-shell          # non-flake fallback, see shell.nix
+```
+
+Inside the shell run `just --list` (tests: `just test`, lint+format: `just check`).

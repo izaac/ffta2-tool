@@ -43,12 +43,12 @@ behind for manual inspection.
 
 ## Fixtures (drop the saves here yourself, do not commit them)
 
-- `fixtures/merged.sav` — SLOT 1 Hard 0:56:23, story flag `0x00AA`,
+- `fixtures/merged.sav`: SLOT 1 Hard 0:56:23, story flag `0x00AA`,
   accepted quest "Drive off those brigands, the Yellow Wings" whose `!`
   node sits in Targ Wood (Traveler's Way). Gully clan, 6 members,
   6450 Gil / 22 CP. This is the Traveler's Way state the battle proof
   (e5) needs.
-- `fixtures/071_FFTA2_both_slots_20261016_150437.sav` — earlier state
+- `fixtures/071_FFTA2_both_slots_20261016_150437.sav`: earlier state
   (story `0x0082`), accepted quest "What's in the woods? Wolves...!"
   at Muskmallow Field. Alternative battle route.
 - No fixture in the repo opens Camoa pub recruitment; Pub proofs
@@ -62,11 +62,16 @@ behind for manual inspection.
 | `FFTA2_SAVE` | `fixtures/merged.sav` | source save a scenario copies from |
 | `OUT_DIR` | `/tmp` | session dirs + artifacts land in `$OUT_DIR/e2e/` |
 | `MDS` | `$SCRIPT_DIR/../mds.sh` | driver override |
+| `MDS_EXTRA_PATH` | (none) | prepended to PATH; use when `xdotool`, `Xvfb`, `gdb`, ImageMagick (`magick`, `import`) or `python3` are not on the ambient PATH (the driver fails fast naming the missing tool) |
 
 Rules encoded in the driver: stagger parallel sessions >= 8 s, ONE gdb
 session per emulator start, and melonDS saves live in the session dir
 until `mds.sh stop` pulls them out. See
 `docs/melonds_headless_debugging.md` for the full gotcha list.
+
+`nix develop` (or `nix-shell`, see shell.nix) preloads melonDS and every
+driver tool on PATH, so `MDS_EXTRA_PATH` is only needed outside the Nix
+shell on machines whose package manager keeps these tools elsewhere.
 
 ## Scenario prep and run
 

@@ -16,7 +16,7 @@ Fully audited and legally verified tactical specification for *Final Fantasy Tac
 
 2. **Race & Job Legality Corrections**:
    - **Luso / Hume Support**: *Unscarred* (`0x365`) is Master Monk (Bangaa) and Ravager (Gria) exclusive; Humes cannot learn it. Luso legally adopts **Dual Wield** (`0x35C`, Ninja Support). Equipping two high-tier katanas doubles standard attack and Flair blade burst damage.
-   - **Moogle Reaction**: *Reflex* (`0x33A`) cannot be learned by any Moogle class. Moogle legally equips **Return Fire** (`0x33E`, Fusilier Reaction — catches and deflects ranged projectiles) or **Critical: Quicken** (`0x336`, Time Mage).
+   - **Moogle Reaction**: *Reflex* (`0x33A`) cannot be learned by any Moogle class. Moogle legally equips **Return Fire** (`0x33E`, Fusilier Reaction; catches and deflects ranged projectiles) or **Critical: Quicken** (`0x336`, Time Mage).
    - **Aura Origin**: *Aura* (`0xAC`, Auto-Life / Reraise + Regen) is learned through **Warding** (`0x11`, Defender), not Templar. Bangaa Cannoneer sets secondary ability set to Warding (`0x11`).
    - **Blood Price Mechanics**: *Blood Price* (`0x36A`) costs **2x the spell's MP cost in HP**. Doublecast Maduin (32 MP) costs 64 HP per cast (128 HP total). Viera equips **Angel Ring** (`0x0189`, Auto-Reraise) as a safety net against self-KO, and opens Turn 1 with single Maduin (64 HP) + Kirin (36 HP Regen) or Unicorn (24 HP Cleanse).
 
@@ -61,15 +61,15 @@ flowchart TD
 
 ## 3. Verified Squad Builds & ROM Hex Reference
 
-### Slot 0: Luso (Hume) — The Dual Katana Blademaster
+### Slot 0: Luso (Hume), The Dual Katana Blademaster
 
 - **Primary Job**: **Parivir** (`0x08`)
 - **Secondary Ability Set**: **Chivalry** (Paladin, `0x06`)
-- **Reaction**: **Strike Back** (`0x33C`, Fighter) — Neutralizes incoming melee physical attacks and counters.
-- **Support**: **Dual Wield** (`0x35C`, Ninja) — Equips two weapons; standard attacks and Flair blades deliver twin strikes.
+- **Reaction**: **Strike Back** (`0x33C`, Fighter): neutralizes incoming melee physical attacks and counters.
+- **Support**: **Dual Wield** (`0x35C`, Ninja): equips two weapons; standard attacks and Flair blades deliver twin strikes.
 - **Key Abilities**:
   - *Skyfury Blade* (`0x64`), *Hoarfrost Blade* (`0x65`), *Shimmering Blade* (`0x63`)
-  - *Nurse* (`0x50` — Cleanses ailments + heals area), *Saint Cross* (`0x54`), *Holy Blade* (`0x55`)
+  - *Nurse* (`0x50`: cleanses ailments + heals area), *Saint Cross* (`0x54`), *Holy Blade* (`0x55`)
 - **Equipment (100% Legal Proficiencies)**:
   - Main Hand: **Chirijiraden** (`0x0018`, +65 Atk, Fire Katana)
   - Off Hand: **Hyakushiki-masamune** (`0x0074`, +78 Atk Katana, Dual Wield)
@@ -79,12 +79,12 @@ flowchart TD
 
 ---
 
-### Slot 1: Nu Mou — The Arcane Mace Medic
+### Slot 1: Nu Mou, The Arcane Mace Medic
 
 - **Primary Job**: **Sage** (`0x1F`)
 - **Secondary Ability Set**: **Alchemy** (Alchemist, `0x1A`)
-- **Reaction**: **Reflex** (`0x33A`, Sage) — Dodges all standard physical strikes.
-- **Support**: **Halve MP** (`0x35E`, Bishop) — Cuts Gigaflare to 16 MP and Bio to 12 MP.
+- **Reaction**: **Reflex** (`0x33A`, Sage): dodges all standard physical strikes.
+- **Support**: **Halve MP** (`0x35E`, Bishop): cuts Gigaflare to 16 MP and Bio to 12 MP.
 - **Key Abilities**:
   - *Gigaflare* (`0xF0`), *Bio* (`0xF1`), *Aero* (`0x47`)
   - *Items* (Alchemy unlocks infinite-range 100% success-rate delivery of Remedies, X-Potions, Phoenix Downs)
@@ -97,12 +97,12 @@ flowchart TD
 
 ---
 
-### Slot 2: Viera — The Blood Price Doublecaster
+### Slot 2: Viera, The Blood Price Doublecaster
 
 - **Primary Job**: **Red Mage** (`0x27`)
 - **Secondary Ability Set**: **Summoning Magick** (Summoner, `0x24`)
 - **Reaction**: **Reflex** (`0x33A`, Fencer)
-- **Support**: **Blood Price** (`0x36A`, Spellblade) — Spells consume HP at 2x the normal MP cost.
+- **Support**: **Blood Price** (`0x36A`, Spellblade): spells consume HP at 2x the normal MP cost.
 - **Key Abilities**:
   - *Double Cast* (`0x139`): Casts two spells per turn.
   - *Maduin* (`0x148`): Non-elemental area damage (32 MP = 64 HP).
@@ -118,7 +118,7 @@ flowchart TD
 
 ---
 
-### Slot 3: Bangaa — The Artillery Battery & Defender
+### Slot 3: Bangaa, The Artillery Battery & Defender
 
 - **Primary Job**: **Cannoneer** (`0x16`)
 - **Secondary Ability Set**: **Warding** (Defender, `0x11`)
@@ -138,7 +138,7 @@ flowchart TD
 
 ---
 
-### Slot 4: Hume (Generic) — The Long-Range Sniper & High Magick Battery
+### Slot 4: Hume (Generic), The Long-Range Sniper & High Magick Battery
 
 - **Primary Job**: **Hunter** (`0x0C`)
 - **Secondary Ability Set**: **High Magick** (Seer, `0x0D`)
@@ -157,12 +157,12 @@ flowchart TD
 
 ---
 
-### Slot 5: Moogle — The Lock-Down & Turn Engine
+### Slot 5: Moogle, The Lock-Down & Turn Engine
 
 - **Primary Job**: **Fusilier** (`0x30`)
 - **Secondary Ability Set**: **Acrobatics** (Juggler, `0x2A`)
-- **Reaction**: **Return Fire** (`0x33E`, Fusilier) — Intercepts and returns ranged attacks.
-- **Support**: **Concentration** (`0x361`, Fusilier) — Maximizes status bullet hit rates.
+- **Reaction**: **Return Fire** (`0x33E`, Fusilier): intercepts and returns ranged attacks.
+- **Support**: **Concentration** (`0x361`, Fusilier): maximizes status bullet hit rates.
 - **Key Abilities**:
   - *Stopshot* (`0x170`): 8-tile Stop status lock.
   - *Charmshot* (`0x16D`): 8-tile Charm control.
