@@ -45,4 +45,6 @@ Copy `config.example.toml` to `config.toml` (or `~/.config/ffta2-tool/config.tom
 
 - [Save Architecture Reference](docs/save_architecture.md): Complete technical breakdown of save layout, cipher algorithms, and ARM9 disassembly offsets.
 - [Meta Squad Strategy Specification](docs/meta_squad_strategy.md): Verified builds, legal proficiencies, and endgame gear.
-- [MelonDS Headless Debugging](docs/melonds_headless_debugging.md): Automated emulation testing, headless Xvfb runner, and load screen verification.
+- [MelonDS Headless Debugging](docs/melonds_headless_debugging.md): Automated emulation testing, headless Xvfb runner, load screen verification and battle driving rules.
+- [MelonDS E2E Walkthrough](examples/melonds/e2e/WALKTHROUGH.md): Replayable in-game proofs of rename, inject, full roster, a won battle, the world map save and a cold reload.
+- [Save Format Map](docs/save_format_map.md): Every verified address, including the in-battle RAM layout.

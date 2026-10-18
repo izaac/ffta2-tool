@@ -3,13 +3,19 @@
 # POSIX sh: no bashisms (works with dash, busybox sh, bash-as-sh).
 #   mds.sh start <sdir> <sav> [gdb_port]   boot ROM with <sav>, GDB ARM9 stub on gdb_port (default 3333)
 #   mds.sh seq   <sdir> "btn[:hold[:after]] ..."  DS buttons: a b x y l r start select up down left right
-#   mds.sh shot  <sdir> <name>             DS screens (256x384) at 2x -> <sdir>/<name>.png
+#   mds.sh shot  <sdir> <name> [pct]       DS screens (256x384) scaled (default 200%) -> <sdir>/<name>.png
+#   mds.sh raw   <sdir>                    DS screens as raw 8-bit RGB (256x384x3) on stdout, for pixel probes
+#   mds.sh touch <sdir> <x> <y> [hold s]   tap the touch screen at DS coords x 0..255, y 0..191
+#   mds.sh state <sdir> save|load [slot]   melonDS savestate through the File menu (slot 1..5) -> <sdir>/work/game.ml<slot>
 #   mds.sh gdb   <sdir> <gdb-cmd>...       one-shot gdb batch against the stub (pauses+resumes)
 #   mds.sh waitchange <sdir> [timeout s] [interval s]        return 0 once the frame content differs from the first poll
 #   mds.sh waitidle   <sdir> [timeout] [interval] [stable N]  return 0 once the frame is unchanged for N consecutive polls
 #   mds.sh lookslike  <sdir> <ref.png> [fuzz %] [timeout s]   return 0 once the frame is within fuzz RMSE of the reference shot
 #   mds.sh savediff   <a.sav> <b.sav>                         byte-diff two saves (exit 1 on nonzero diff)
 #   mds.sh stop  <sdir> [out.sav] [ref.sav]  TERM melonDS, copy game.sav to out.sav; with ref.sav, exit 3 when unchanged
+# Disk safety: game.nds is hard-linked from ROM_PATH when possible (no 128 MiB copy per session) and
+# melonds.log is capped (a stub whose gdb client detached spams "[GDB] receiving from stream 0" forever,
+# which once filled a 32 GiB tmpfs and made every screenshot/save write fail).
 # shellcheck source=/dev/null
 set -eu
 export PATH="/nix/store/vkhy10hwyfzlblr4748qdxn8zx88gr34-xdotool-3.20211022.1/bin:/nix/store/vdpfrvny2hz0cd14yrsnk11xns9n35yp-xorg-server-21.1.24/bin:/nix/store/b1k97zdkdshx5hm95r1g9cfdgl22j4fm-gdb-17.2/bin:/nix/store/g10qxbm4svmxmg2niwbgmxgcb89jxwwk-imagemagick-7.1.2-32/bin:$PATH"
@@ -53,7 +59,7 @@ start)
         d=$((d + 1))
     done
     if [ -z "$D" ]; then echo "[mds] start: no free display in 130..160" >&2; exit 1; fi
-    Xvfb "$D" -screen 0 800x600x24 -nolisten tcp >"$W/xvfb.log" 2>&1 &
+    setsid Xvfb "$D" -screen 0 800x600x24 -nolisten tcp >"$W/xvfb.log" 2>&1 &
     XPID=$!; sleep 1
     cp "$REPO_ROOT/examples/melonds/melonDS.toml" "$W/cfg/melonDS/melonDS.toml"
     python3 - "$W/cfg/melonDS/melonDS.toml" "$PORT" <<'PY'
@@ -65,10 +71,19 @@ t = t.replace("[Instance0.Gdb.ARM7]\nPort = 3334", f"[Instance0.Gdb.ARM7]\nPort 
 t = t.replace("[Instance0.Gdb.ARM9]\nPort = 3333", f"[Instance0.Gdb.ARM9]\nPort = {port}")
 open(p, "w").write(t)
 PY
-    cp "$ROM_PATH" "$W/game.nds"; cp "$SAV" "$W/game.sav"
+    ln -f "$ROM_PATH" "$W/game.nds" 2>/dev/null || cp "$ROM_PATH" "$W/game.nds"
+    cp "$SAV" "$W/game.sav"
     DISPLAY="$D" QT_QPA_PLATFORM=xcb SDL_AUDIODRIVER=dummy XDG_CONFIG_HOME="$W/cfg" XDG_DATA_HOME="$W/data" \
-        HOME="$W/home" LIBGL_ALWAYS_SOFTWARE=1 setsid melonDS "$W/game.nds" >"$W/melonds.log" 2>&1 &
+        HOME="$W/home" LIBGL_ALWAYS_SOFTWARE=1 setsid melonDS "$W/game.nds" >>"$W/melonds.log" 2>&1 &
     MPID=$!
+    # O_APPEND log + periodic truncation keeps the spam bounded while the emulator lives
+    (
+        while kill -0 "$MPID" 2>/dev/null; do
+            sleep 5
+            sz=$(stat -c %s "$W/melonds.log" 2>/dev/null || echo 0)
+            if [ "$sz" -gt 8388608 ]; then : >"$W/melonds.log"; fi
+        done
+    ) >/dev/null 2>&1 &
     WID=""
     n=0
     while [ "$n" -lt 35 ]; do
@@ -101,18 +116,50 @@ seq)
 shot)
     . "$S/env"; export DISPLAY="$D"
     import -window root "$S/$1.full.png"
-    magick "$S/$1.full.png" -crop 256x384+0+22 +repage -scale 200% "$S/$1.png"
+    magick "$S/$1.full.png" -crop 256x384+0+22 +repage -scale "${2:-200}%" "$S/$1.png"
     echo "$S/$1.png"
+    ;;
+raw)
+    . "$S/env"; export DISPLAY="$D"
+    import -window root -crop 256x384+0+22 +repage -depth 8 RGB:-
+    ;;
+touch)
+    . "$S/env"; export DISPLAY="$D"
+    # bottom screen starts at DS row 192, window content at root y 22
+    xdotool windowfocus "$WID"
+    xdotool mousemove "$1" "$(( $2 + 214 ))"
+    sleep 0.15
+    xdotool mousedown 1; sleep "${3:-0.25}"; xdotool mouseup 1
+    ;;
+state)
+    . "$S/env"; export DISPLAY="$D"
+    op="$1"; slot="${2:-1}"
+    # Qt shortcuts (Shift+F1..) never fire without a window manager, so click through File > Save/Load state
+    case "$op" in
+        save) item=317; sub=$(( 320 + (slot - 1) * 22 )) ;;
+        load) item=339; sub=$(( 342 + (slot - 1) * 22 )) ;;
+        *) echo "state: save|load" >&2; exit 2 ;;
+    esac
+    xdotool mousemove 18 10; sleep 0.2; xdotool click 1; sleep 0.5
+    xdotool mousemove 50 "$item"; sleep 0.5
+    xdotool mousemove 230 "$sub"; sleep 0.3; xdotool click 1
+    sleep 1.5
+    xdotool mousemove 790 590
     ;;
 gdb)
     . "$S/env"
     TD=$(mktemp -d)
-    {
-        printf '%s\n' "set architecture arm" "target remote 127.0.0.1:$PORT"
-        printf '%s\n' "$@"
-        printf '%s\n' detach quit
-    } >"$TD/cmds"
-    gdb -batch -x "$TD/cmds" >"$TD/out" 2>&1
+    # one -ex per command: with -x <file> the first failing command aborts the rest, skipping
+    # the final detach; the stub then keeps a dead connection and spams the log
+    nargs=$(( $# + 3 ))
+    set -- "set architecture arm" "target remote 127.0.0.1:$PORT" "$@" detach
+    i=0
+    while [ "$i" -lt "$nargs" ]; do
+        c=$1; shift
+        set -- "$@" -ex "$c"
+        i=$((i + 1))
+    done
+    gdb -batch "$@" >"$TD/out" 2>&1
     grep -v -E "warning: No executable|determining executable|target architecture is set|Inferior 1|^$" "$TD/out" || true
     rm -rf "$TD"
     ;;

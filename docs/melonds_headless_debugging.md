@@ -163,3 +163,40 @@ The runner captures verification screenshots in the output directory:
    the save payload.
 4. **Unit Info & Stability**: Confirms dual-wielded weapons and ability sets render
    without triggering black screens or frozen animations.
+
+---
+
+## 6. Driving menus and battles (e2e harness)
+
+The scenario drivers under `examples/melonds/e2e/` share a few hard-won rules:
+
+- **D-pad steps need short taps.** Hold a direction 0.12 s per step. Holds of 0.4 s or more cross
+  the game's key repeat and move two menu rows or two tiles (the old "down then A" that opened
+  Attack actually selected Wait). `A` and `B` can keep 0.25 to 0.4 s holds.
+- **Guard with pixels, not sleeps.** `dsbot.py` grabs raw frames through `mds.sh raw` and has
+  detectors for the COMMANDS menu, the B (cancel) button, the attack forecast, the world map and
+  the save slot cursor. Wait for the signature, then act. Pick signatures that cannot move: the
+  COMMANDS header shifts up a row when a trait banner such as "Fleet of foot!" shows, the amber
+  Config button at the bottom right does not.
+- **RAM comes from two places.** `rsp.py` keeps the single gdb connection a session is allowed and
+  answers small peeks in about 0.2 s (battle roster, map cursor, HP). Bulk dumps come from
+  savestates (`mds.sh state <sdir> save <slot>`), never from the stub (12 minutes for 4 MiB).
+  `docs/save_format_map.md` section 10 holds the battle addresses.
+- **The gdb stub is single client.** Once that client leaves, the stub never accepts another and
+  floods `melonds.log`. `mds.sh` appends to the log and truncates it every few seconds while the
+  emulator lives, hard links `game.nds` instead of copying 128 MiB per session, and starts Xvfb
+  under `setsid` so a dying parent shell cannot take the display down.
+- **Touch works.** `mds.sh touch <sdir> x y` taps the bottom screen (DS coordinates) and moves
+  the battle cursor like the stylus would.
+- **Savestates need the menu.** Qt shortcuts such as Shift+F1 never fire without a window manager,
+  so `mds.sh state` clicks File > Save state / Load state.
+- **Check free space first** (`df -h /tmp`). A full tmpfs makes screenshots and the in-game save
+  fail silently.
+
+### Battle scenario
+
+`scenarios/run_e5_full.sh` produces an in-battle quicksave with an injected unit.
+`scenarios/run_e6_battle.py` resumes it and plays the fight with real attacks until VICTORY, mashes
+through the results to the world map, saves to slot 1, stops melonDS to flush, validates the file,
+diffs it against the pre-battle slot and reloads from the title screen, where the game's clan table
+in RAM must equal the decrypted save byte for byte. See `examples/melonds/e2e/WALKTHROUGH.md` (E6).

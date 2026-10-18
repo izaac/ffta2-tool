@@ -70,7 +70,7 @@ Unit fields (all offsets relative to unit base; UNIT_TABLE_BASE = 0x0238):
 |---|---|
 | +0x00..0x0C | zeroed prefix (13 bytes) |
 | +0x0D | character_id: 1 = Luso (only slot 0), 0 = everyone |
-| +0x0E | job_id (0x01 = Soldier) — drives +0x18/+0x1A, see below |
+| +0x0E | job_id (0x01 = Soldier); drives +0x18/+0x1A, see below |
 | +0x0F | race_id (1..7); must equal race of the job (`get_job_race_id`) |
 | +0x10 | zero on real saves |
 | +0x11 | roster_index, 1-based unique 1..24 (`0x020BA748` picks lowest unused); on a contiguous roster == slot+1. Party order in menus derives from this, not a separate array |
@@ -141,7 +141,7 @@ Field = plaintext 0x2937..0x293F (RAM 0x0212D817..0x0212D81F) = game flags
 0x0718..0x0720. The privilege table has 64 entries (ARM9 `0x0210695C..0x021069FC`,
 names in sysdata/JD_message_0.pak file 15), one entry per flag bit 0x071C..0x075B:
 
-- 0x0718..0x071B (= 0x2937 bits 0..3): NOT privileges — list stays empty. Preserve.
+- 0x0718..0x071B (= 0x2937 bits 0..3): NOT privileges, list stays empty. Preserve.
 - 0x0744..0x0749 (= 0x293C bits 4..7 + 0x293D bits 0..1): entries 41..46, nameless
   "–" rows in the menu.
 - 0x075C..0x075F (= 0x293F bits 4..7): past the last entry; never set.
@@ -173,14 +173,98 @@ Per recruited unit: roster_index == slot+1 and unique, no holes, status in
 name_id rules of §5, race == job race, level 1..99, cur <= max for HP/MP.
 Names: <= 9 chars, known charset, terminator, roundtrip equality.
 Any rule must produce 0 errors across every real user save (checked before each rule
-was added) — a rule that fires on a real save is the rule's fault, not the save's.
+was added) a rule that fires on a real save is the rule's fault, not the save's.
 
 ## 9. melonDS workflow A-Z (tooling, not save format)
 
 - `examples/melonds/` + ROM `/tmp/opencode/ffta2.nds` (ROM_PATH override in mds.sh),
   stagger parallel sessions >= 8 s.
-- GDB stub: ONE session per emulator start; BYTE writes at unaligned addresses kill
-  the stub — read `x/wx`, modify in-alignment, write whole words; the plaintext+RAM
-  formula of §1 converts addresses.
+- GDB stub: it serves ONE client per emulator start. After a `detach` or a dropped socket the
+  stub keeps the dead connection, never accepts another, and spams `[GDB] receiving from stream 0`
+  (31 GiB of log once filled a 32 GiB tmpfs). Either do every poke in one gdb batch
+  (`mds.sh gdb`) or hold a single long-lived connection (`examples/melonds/e2e/rsp.py`) and use
+  halt/read/resume around each peek. Unaligned BYTE writes kill the stub: write whole words.
+  The plaintext+RAM formula of §1 converts addresses.
+- Reads cost about 85 ms per 512 B packet, so never dump the 4 MiB RAM through the stub (12 min).
+  For bulk RAM use `mds.sh state <sdir> save <slot>` (File > Save state, 3 s) and read the main
+  RAM out of the savestate: it is the 4 MiB at file offset 36 of `work/game.ml<slot>` (NDSG
+  section). Savestates also give instant rewinds (`state load`) while probing.
 - Proof standard for any new field edit: menus that display it, in-game save,
   reload from title, values persist. Screenshot into /tmp/opencode/.
+
+## 10. In-battle RAM (melonDS, verified 2026-10-18)
+
+Battle state lives in RAM only. The save never contains it; what a fight changes in the save is
+the clan unit structs (§3), gil, clan points and the quest counters (§10.6). Addresses are main
+RAM as seen by melonDS (base 0x02000000). They were found with savestate diffs and confirmed by
+the E6 run in `examples/melonds/e2e/WALKTHROUGH.md`, which plays a whole battle on them.
+
+### 10.1 Unit structs
+
+Every combatant uses the 0x11C unit struct of §3 (job +0x0E, status u16 +0x12, level +0x22,
+HP u16 pair +0x3C/+0x3E, MP +0x40/+0x42, stats +0x44..).
+
+- Our deployed units are the clan table itself: `0x0212B118 + i*0x11C`
+  (plaintext 0x0238 + `0x0212AEE0`). After title > Load > world map this table equals the
+  decrypted slot byte for byte, all 0x11C bytes of every unit (E6 reload gate).
+- Foes and guests sit in a second table of the same stride starting at `0x02129FAC`, in deployment
+  order. "You Say Tomato": slot 0 Alraune (job 87), slots 1 to 4 Deadly Nightshade (job 88),
+  slot 5 Bangaa Warrior guest (job 14), slot 6 Hume Thief guest (job 2). Status bit 0x0001 marks
+  hostile units (0x0099 foes, 0x009C guests).
+- The HP word at +0x3C is `(max << 16) | cur` and is the live combat value: forecasts read it and
+  attacks write it. A real run shows the Alraune going 114, 78, 48, 24 and then KO.
+- A KO'd foe leaves its struct behind with cur HP 0.
+
+### 10.2 Position records
+
+The battle map keeps one 0x48 byte record per unit starting at `0x02129AAC`:
+
+| Offset | Meaning |
+|---|---|
+| +0x00 / +0x01 | tile x / y |
+| +0x07 | Move stat, tiles the unit may walk (Luso 6, Bangaa Cannoneer 3, Viera White Mage 3 match Unit Info) |
+| -0x08 (end of the previous record) | u32 pointer to the unit struct + 8 |
+
+Order is foes, guests, then our units in deployment order. A record whose pointer misses both unit
+tables (or whose struct has level 0) is a placeholder and must be skipped.
+
+### 10.3 Map cursor
+
+The cursor tile is a u16 pair at `0x0212F01A` (x) and `0x0212F01C` (y), mirrored in two bytes at
+`0x021298D3` / `0x021298D2`. With the E6 camera D-pad right and left change x by one, down and up
+change y by one. Touch taps and the L/R unit cycling write the same cells. At the start of one of
+our turns the cursor sits on the acting unit, which identifies it without any pixel reading.
+
+### 10.4 Controls that matter
+
+- D-pad steps need SHORT taps (hold 0.12 s). Holds of 0.4 s or more hit the game's key repeat and
+  move two rows or tiles, which is what made earlier harness runs press Wait instead of Attack.
+- COMMANDS menu rows: Move, Action, Wait. Action opens the ability list with Attack first.
+- Attack: Action > Attack > walk the cursor onto the foe tile > A shows the forecast (HIT %, points,
+  both name plates) > A again confirms. No forecast means the tile is out of reach.
+- Move: Move > cursor onto a blue tile > A. A tile that is not reachable simply does nothing.
+- Wait: A, then A again to keep the facing.
+- L/R in target mode step through the next 20 turn-order slots (units repeat, no wrap), they do not
+  list each unit once.
+
+### 10.5 Corrections to earlier notes
+
+- The `0x0212` window is not a HUD-only buffer. It is the foe unit table of §10.1.
+- The "connected Horn Shot" recorded in `e6_attack_mode` was a foe attacking the Bangaa guest.
+  `down a down a r a` at 0.4 s holds selected Wait, so no player attack had happened yet.
+- The archived `guaranteed_win` and `complete_win` runs never show a foe dying. Filenames and
+  captions are not evidence, a victory needs the results screen, the world map and a flushed save.
+- The `0x22f5xxx` combatant records named in the first draft were never needed and are unverified.
+
+### 10.6 What a won battle changes in the save
+
+E6 diff of slot 1, pre-battle injected save versus the in-game save made on the world map after the
+fight (offsets are the plaintext offsets of this document):
+
+- units that levelled up (Nyrood 6 to 7, Phonis 5 to 6, Otz 5 to 6) change level, exp, speed,
+  HP and MP caps and all four stats through the game's own growth; units that did not (Luso,
+  the injected White Mage) change exp only, Luso 25 to 97 and the White Mage 0 to 54.
+- gil `0x281C` and clan points `0x2820` rise by the quest reward (6450 to 6910 gil, 22 to 32 CP);
+  the quest counters and the preview entry (quests completed, play time) follow.
+- status flags stay 0x0080 in the saved record, the in-battle 0x0088 bit only exists in RAM.
+- the validator reports no new issue and both slot checksums are valid.

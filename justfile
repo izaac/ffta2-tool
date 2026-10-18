@@ -15,6 +15,7 @@ install:
 test:
     PYTHONPATH=. python3 tests/test_crypto.py
     PYTHONPATH=. python3 tests/test_patcher.py
+    PYTHONPATH=. python3 tests/test_battle_bot.py
 
 md_targets := "docs/*.md README.md"
 md_ignores := "MD013,MD024,MD026,MD033,MD036,MD041"
@@ -76,3 +77,7 @@ validate save="":
 # Run headless melonDS automated test runner
 melonds-test rom save="examples/FFTA2_Meta_Squad_Hard.sav" out="examples/melonds/output":
     ./examples/melonds/run_headless_test.sh "{{rom}}" "{{save}}" "{{out}}"
+
+# Win the E5 quicksave battle in melonDS, save on the world map, reload and verify (needs run_e5_full.sh first)
+melonds-e6 out="/tmp":
+    OUT_DIR="{{out}}" python3 examples/melonds/e2e/scenarios/run_e6_battle.py

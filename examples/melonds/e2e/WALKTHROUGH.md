@@ -1,6 +1,6 @@
 # FFTA2 melonDS E2E walkthrough
 
-How to replay every end to end proof (rename, inject, full roster, live battle)
+How to replay every end to end proof (rename, inject, full roster, live battle and its aftermath)
 against melonDS: the exact keys pressed at each step, the screenshot that
 captures it, and what has to be true at the end. The embedded screenshots were
 produced with the scripts in `scenarios/` on one host; you can regenerate them
@@ -20,7 +20,9 @@ Prerequisites:
    least 2 apart (ARM9 = PORT, ARM7 = PORT+1).
 4. Key notation `btn:hold:after`, all in seconds (`a:0.5:4` means press A for
    0.5 s, wait 4 s). Button to keyboard mapping: a=x, b=z, x=s, y=a, l=q,
-   r=w, start=Return, select=BackSpace, dpad = arrow keys.
+   r=w, start=Return, select=BackSpace, dpad = arrow keys. D-pad steps in battle
+   and in the roster need SHORT taps (`down:0.12:0.8`): a 0.4 s hold hits the game's
+   key repeat and moves two rows.
 
 Common macros used in every scenario:
 
@@ -298,13 +300,94 @@ Steps:
     `scripts/manage_slots.py --save $OUT_DIR/e2e/e5_final_saved.sav list`
     (slot 1 VALID), `cli info --slot 1`, `cli validate --slot 1` (0 errors).
 
-End condition at the time of writing: steps 1 to 9 are proven. The remaining
-leg is the aftermath: finish or Retreat the battle, save on the world map,
-reload from title, and confirm the roster still counts 7 with Acia intact.
-That post battle bookkeeping check belongs to E6, in progress. Known
-limitation: in battle quicksave records do not decrypt with the tool's record
-algebra, the game encrypts quicksave records differently from main slot
-records (see the known limitations section and HARDEN_REPORT).
+End condition: steps 1 to 9 are proven by `scenarios/run_e5_full.sh`, which ends on the resumed
+quicksave. Known limitation: in battle quicksave records do not decrypt with the tool's record
+algebra, the game encrypts quicksave records differently from main slot records (see the known
+limitations section and HARDEN_REPORT). The fight itself, the aftermath and the world map save
+are E6.
+
+---
+
+## E6: win the battle, save on the world map, reload
+
+Purpose. Prove the whole life of an injected unit: it fights, the fight is won with real attacks,
+the game writes its own results into the save, and the save survives a cold reload. Nothing is
+forged. `scenarios/run_e6_battle.py` runs it from the E5 quicksave:
+
+```bash
+OUT_DIR=/tmp/opencode/e2e_run bash examples/melonds/e2e/scenarios/run_e5_full.sh
+OUT_DIR=/tmp/opencode/e2e_run python3 examples/melonds/e2e/scenarios/run_e6_battle.py
+```
+
+The bot (`battle.py`) reads the roster and the map cursor from RAM through the gdb stub
+(`docs/save_format_map.md` section 10) and presses DS buttons through `mds.sh`. Per turn of one of
+our units: Attack the nearest foe within 6 tiles (Action > Attack, walk the cursor onto the foe,
+the forecast appears, A confirms); if that is out of reach, Move to the reachable tile closest to
+the nearest foe and try again; otherwise Wait. The injected healer only fights foes within 2 tiles.
+The log `e6_battle.log` lists every turn, the foe HP it saw and what it did.
+
+1. RESUME. Title, Continue, answer the "Quick Save data will be deleted after it is loaded"
+   prompt with Continue, then A through the OBJECTIVE, FORBIDDEN and PRIVILEGE banners until the
+   COMMANDS menu shows. Acia (Lv.10 White Mage) acts first.
+
+![E6 step 1: Acia's first turn](screenshots/e6_01_battle_start.png)
+
+2. FIRST ATTACK. The attack forecast (HIT %, damage points, both name plates) is the proof that
+   the bot reached a foe through the real UI. Foe HP then falls in RAM turn after turn.
+
+![E6 step 2: attack forecast](screenshots/e6_02_first_attack.png)
+
+3. VICTORY. The bot stops when every foe has 0 HP in RAM on two reads 2.5 s apart. The game then
+   plays the post-battle dialogue.
+
+![E6 step 3: post-battle dialogue](screenshots/e6_03_victory_dialogue.png)
+
+4. QUEST REPORT. A through the dialogue until the report, then the world map returns with the
+   rewards applied (quests completed up by one, clan points and gil up).
+
+![E6 step 4: quest report](screenshots/e6_04_quest_report.png)
+
+![E6 step 5: world map after the battle](screenshots/e6_05_worldmap_after.png)
+
+5. SAVE. `x`, down twice to System Menu, `a` Save, `a` slot 1, up, `a` "Overwrite and save.".
+   After "Data saved to Slot 1." the driver waits 10 s and runs `mds.sh stop <sdir> out ref`, which
+   exits 3 when game.sav still equals the quicksave (nothing flushed).
+
+![E6 step 6: Data saved to Slot 1](screenshots/e6_06_saved.png)
+
+6. FILE GATES (`e6_report.txt`). Both checksums valid, validator without errors and without any
+   issue the pre-battle slot lacked, gil or clan points higher, and a per-unit field diff. In the
+   reference run the units that levelled up changed level, exp, speed, HP/MP caps and the four
+   stats, the others changed exp only, and the injected White Mage went from exp 0 to 54.
+7. RELOAD. Fresh boot on `e6_aftermath.sav`, title > Load. The slot card already shows the new
+   quest count and play time.
+
+![E6 step 7: reloaded load screen](screenshots/e6_07_reloaded_loadscreen.png)
+
+8. After Load the world map matches the saved clan stats, and the driver reads the clan table out
+   of RAM (`0x0212B118`, 0x11C bytes per unit) and requires it to equal the decrypted save byte
+   for byte for every recruited unit.
+
+![E6 step 8: reloaded world map](screenshots/e6_08_reloaded_worldmap.png)
+
+9. Unit Info and the injected unit's status screen show the persisted level, exp and HP.
+
+![E6 step 9: reloaded roster](screenshots/e6_09_reloaded_roster.png)
+
+![E6 step 10: injected unit after the battle](screenshots/e6_10_unit_status.png)
+
+End condition: the script exits 0 and prints `E6 PASS`. Any failed gate exits 1 with the gate named;
+a battle that does not end in VICTORY leaves `e6_fail_battle.png`.
+
+Fragile: the pixel detectors (`dsbot.py`) are calibrated for the US ROM at the default melonDS
+screen layout, and the quest and foe stats differ per run so turn counts vary. How far a unit can
+walk is its Move stat from Unit Info (Luso 6, Cannoneer 3, Acia 3); the game rejects any tile
+beyond it. The bot searches a fixed radius of 4 around the unit, so the farthest candidates are
+sometimes refused, which costs a few seconds and nothing else. If the COMMANDS menu is never found, look at the
+last screenshot first. The first reference run lost 2 minutes that way: a trait banner ("Fleet of
+foot!") pushes the COMMANDS header up a row, so the detector now keys on the amber Config button
+that only that menu shows (exactly 526 matching pixels in every COMMANDS frame of the 62 captured,
+none elsewhere).
 
 ---
 
@@ -324,7 +407,8 @@ and link them here.
   `up` then A. Verify each against the first screenshot of that step on any
   new fixture.
 - Blind mash loops (cutscene 30x, battle intro 15x, placement 8x) count on
-  the cursor moving every tap. One dropped keystroke desyncs the rest.
+  the cursor moving every tap. One dropped keystroke desyncs the rest. E6 avoids them with pixel
+  detectors and RAM reads.
 - `mds.sh stop` is the only safe point to read a save file (flush and exit).
 - Parallel sessions: 8 s start stagger, non overlapping ports.
 - Scripts that strip `/tmp/.X{99..250}-lock` must not run while another
