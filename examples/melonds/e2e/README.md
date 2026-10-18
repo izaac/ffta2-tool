@@ -9,14 +9,34 @@ point, save in-game, reload from the title screen, verify persistence.
 
 ```
 e2e/
-├── mds.sh            driver: start/seq/shot/stop a melonDS session
-│                     (start <sdir> <save> <port> | seq <sdir> "k:t:hold ..." |
-│                      shot <sdir> <name> | stop <sdir> [<out.sav>])
+├── mds.sh            driver: start/seq/shot/stop a melonDS session plus
+│                     frame/settle guards: waitchange, waitidle, lookslike,
+│                     and savediff for byte-level save checks. POSIX sh.
+│                     (start <sdir> <save> <port> | seq <sdir> "k:hold:after ..." |
+│                      shot <sdir> <name> | gdb <sdir> <cmd>... |
+│                      waitchange <sdir> [t] [iv] | waitidle <sdir> [t] [iv] [n] |
+│                      lookslike <sdir> <ref.png> [fuzz%] [t] |
+│                      savediff <a.sav> <b.sav> | stop <sdir> [<out.sav> [<ref.sav>]])
 ├── flow.sh           higher-level: boot/load/save/stop recipe
 ├── nav.sh, nav2.sh   cursor-walking helpers used by some scenarios
 ├── fixtures/         save states to drop in (*.sav gitignored, never committed)
 └── scenarios/        one script per proof (e1..e4 done, e5 in progress)
 ```
+
+The wait-until guards replace fixed sleeps in fragile steps:
+
+- `waitchange` returns 0 the moment the DS screen content differs from the
+  first poll instead of sleeping a fixed number of seconds.
+- `waitidle` returns 0 once the screen has been unchanged for N polls
+  (modal popups, save dialogs).
+- `lookslike` compares the live screen with a reference screenshot and
+  returns 0 within `fuzz` percent RMSE (menu states, dialog captions).
+- `savediff` byte-diffs two saves and lists changed byte runs; `stop
+  <sdir> <out.sav> <ref.sav>` exits 3 when the save never changed since
+  boot, which catches "the game never flushed" instantly.
+
+All of them exit 1 after their timeout with a `timeout_frame.png` left
+behind for manual inspection.
 
 ## Fixtures (drop the saves here yourself, do not commit them)
 
