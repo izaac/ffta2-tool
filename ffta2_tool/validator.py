@@ -9,18 +9,37 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ffta2_tool.charset import (
+    CUSTOM_NAME_BUFFER_LEN,
+    MAX_CUSTOM_NAME_CHARS,
+    VALID_CUSTOM_NAME_BYTES,
+    decode_ffta2_string,
+    encode_ffta2_string,
+)
 from ffta2_tool.mappings import (
+    CHARACTER_NAMES,
     MAX_VALID_EQUIP_ID,
     RACE_JOBS,
     REACTION_ABILITIES,
     SUPPORT_ABILITIES,
     get_item_name,
     get_job_name,
+    get_job_race_id,
     get_race_name,
     is_heavy_armor_capable,
     is_shield_capable,
 )
-from ffta2_tool.save import OFF_UNIT_ABILITIES_END, OFF_UNIT_ABILITIES_START, FFTA2Save, Unit
+from ffta2_tool.save import (
+    MAX_UNITS,
+    OFF_CLAN_NAME,
+    OFF_LEADER_NAME,
+    OFF_UNIT_ABILITIES_END,
+    OFF_UNIT_ABILITIES_START,
+    OFF_UNIT_BASE_FLAGS_END,
+    OFF_UNIT_BASE_FLAGS_START,
+    FFTA2Save,
+    Unit,
+)
 
 # Shields in FFTA2 equipment table (0x0120..0x0130)
 SHIELD_ITEM_RANGE = range(0x0120, 0x0131)
@@ -70,7 +89,7 @@ class ValidationIssue:
 
 
 def validate_unit(unit: Unit) -> list[ValidationIssue]:
-    """Validate a single unit against NDS engine stability constraints."""
+    """Validate a single recruited unit against NDS engine stability constraints."""
     issues: list[ValidationIssue] = []
     idx = unit.index
     raw = unit._data
@@ -78,8 +97,9 @@ def validate_unit(unit: Unit) -> list[ValidationIssue]:
     race_id = raw[0x0F]
     job_id = unit.job_id
 
-    # 1. Race / Job Compatibility
-    if race_id in RACE_JOBS and job_id not in RACE_JOBS[race_id]:
+    # 1. Race / Job Compatibility (get_job_race_id & RACE_JOBS)
+    expected_race = get_job_race_id(job_id)
+    if expected_race == 0 or race_id != expected_race or (race_id in RACE_JOBS and job_id not in RACE_JOBS[race_id]):
         issues.append(
             ValidationIssue(
                 idx,
@@ -91,6 +111,96 @@ def validate_unit(unit: Unit) -> list[ValidationIssue]:
                 ),
             )
         )
+
+    # 1b. Character ID and Name ID invariants
+    if idx == 0:
+        if unit.character_id != 1:
+            issues.append(
+                ValidationIssue(
+                    idx,
+                    "ERROR",
+                    "character_id",
+                    f"Slot 0 (Luso) must have character_id == 1 (got 0x{unit.character_id:02X})",
+                )
+            )
+        if unit.name_id != 0x8001:
+            issues.append(
+                ValidationIssue(
+                    idx,
+                    "ERROR",
+                    "name_id",
+                    f"Slot 0 (Luso) must have name_id == 0x8001 (got 0x{unit.name_id:04X})",
+                )
+            )
+    else:
+        if unit.character_id != 0:
+            issues.append(
+                ValidationIssue(
+                    idx,
+                    "ERROR",
+                    "character_id",
+                    f"Generic slot {idx + 1} must have character_id == 0 (got 0x{unit.character_id:02X})",
+                )
+            )
+        if (unit.name_id & 0x8000) != 0 or not (1 <= unit.name_id < len(CHARACTER_NAMES)):
+            issues.append(
+                ValidationIssue(
+                    idx,
+                    "ERROR",
+                    "name_id",
+                    (
+                        f"Generic slot {idx + 1} must have plain ROM name_id in 1..{len(CHARACTER_NAMES) - 1} "
+                        f"with high bit clear (got 0x{unit.name_id:04X})"
+                    ),
+                )
+            )
+
+    # 1c. Structural invariants (+0x10, roster_index +0x11, status_flags +0x12, base_flags +0x25..0x2D)
+    if raw[0x10] != 0:
+        issues.append(
+            ValidationIssue(idx, "ERROR", "reserved_0x10", f"Unit +0x10 must be 0x00 (got 0x{raw[0x10]:02X})")
+        )
+    if unit.roster_index != idx + 1:
+        issues.append(
+            ValidationIssue(
+                idx,
+                "ERROR",
+                "roster_index",
+                f"Unit roster_index (+0x11) must equal slot+1 ({idx + 1}), got {unit.roster_index}",
+            )
+        )
+    # Note: 0x0080 is standard recruited flag; 0x2080 occurs on real saves
+    # (e.g. 071_FFTA2_both_slots_20261016_150437.sav) when the unit is marked in the active battle formation.
+    if (unit.status_flags & 0x0080) == 0 or (unit.status_flags & ~0x2080) != 0:
+        issues.append(
+            ValidationIssue(
+                idx,
+                "ERROR",
+                "status_flags",
+                f"Unit status_flags (+0x12) must be 0x0080 (or 0x2080), got 0x{unit.status_flags:04X}",
+            )
+        )
+    expected_base_flags = b"\x01" * (OFF_UNIT_BASE_FLAGS_END - OFF_UNIT_BASE_FLAGS_START)
+    if bytes(raw[OFF_UNIT_BASE_FLAGS_START:OFF_UNIT_BASE_FLAGS_END]) != expected_base_flags:
+        issues.append(
+            ValidationIssue(
+                idx,
+                "ERROR",
+                "base_flags",
+                (
+                    f"Unit base_flags (+0x25..+0x2D) must be 01x9, got "
+                    f"{bytes(raw[OFF_UNIT_BASE_FLAGS_START:OFF_UNIT_BASE_FLAGS_END]).hex()}"
+                ),
+            )
+        )
+
+    # 1d. Level and HP/MP bounds
+    if not (1 <= unit.level <= 99):
+        issues.append(ValidationIssue(idx, "ERROR", "level", f"Unit level must be 1..99 (got {unit.level})"))
+    if unit.max_hp == 0 or unit.cur_hp > unit.max_hp:
+        issues.append(ValidationIssue(idx, "ERROR", "hp", f"Invalid HP: cur_hp={unit.cur_hp} > max_hp={unit.max_hp}"))
+    if unit.cur_mp > unit.max_mp:
+        issues.append(ValidationIssue(idx, "ERROR", "mp", f"Invalid MP: cur_mp={unit.cur_mp} > max_mp={unit.max_mp}"))
 
     # 2. Equipment ID boundaries
     equips = [
@@ -260,11 +370,98 @@ def validate_unit(unit: Unit) -> list[ValidationIssue]:
     return issues
 
 
+def _validate_custom_name_buffer(raw_buf: bytes, field_name: str) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    if 0 not in raw_buf:
+        issues.append(
+            ValidationIssue(
+                -1,
+                "ERROR",
+                field_name,
+                f"{field_name} buffer is missing a 0x00 terminator inside {len(raw_buf)} bytes",
+            )
+        )
+        return issues
+
+    null_idx = raw_buf.index(0)
+    prefix = raw_buf[:null_idx]
+    if not prefix:
+        issues.append(ValidationIssue(-1, "ERROR", field_name, f"{field_name} cannot be empty"))
+        return issues
+
+    if len(prefix) > MAX_CUSTOM_NAME_CHARS:
+        issues.append(
+            ValidationIssue(
+                -1,
+                "ERROR",
+                field_name,
+                f"{field_name} length ({len(prefix)}) exceeds cap of {MAX_CUSTOM_NAME_CHARS} characters",
+            )
+        )
+
+    bad_bytes = [b for b in prefix if b not in VALID_CUSTOM_NAME_BYTES]
+    if bad_bytes:
+        issues.append(
+            ValidationIssue(
+                -1,
+                "ERROR",
+                field_name,
+                f"{field_name} contains unsupported character byte(s): {[f'0x{b:02X}' for b in bad_bytes]}",
+            )
+        )
+        return issues
+
+    decoded = decode_ffta2_string(raw_buf, max_len=len(raw_buf))
+    try:
+        reencoded = encode_ffta2_string(decoded, length=len(raw_buf))
+        if decode_ffta2_string(reencoded, max_len=len(raw_buf)) != decoded:
+            issues.append(ValidationIssue(-1, "ERROR", field_name, f"{field_name} failed encode/decode round-trip"))
+    except ValueError as exc:
+        issues.append(ValidationIssue(-1, "ERROR", field_name, str(exc)))
+
+    return issues
+
+
 def validate_save(save: FFTA2Save) -> list[ValidationIssue]:
-    """Validate all active clan members in save."""
+    """Validate save-level invariants (custom names, contiguous roster) and all active clan members."""
     all_issues: list[ValidationIssue] = []
-    for i in range(24):
+
+    leader_buf = bytes(save.plaintext[OFF_LEADER_NAME : OFF_LEADER_NAME + CUSTOM_NAME_BUFFER_LEN])
+    clan_buf = bytes(save.plaintext[OFF_CLAN_NAME : OFF_CLAN_NAME + CUSTOM_NAME_BUFFER_LEN])
+    all_issues.extend(_validate_custom_name_buffer(leader_buf, "leader_name"))
+    all_issues.extend(_validate_custom_name_buffer(clan_buf, "clan_name"))
+
+    seen_empty = False
+    seen_roster_indices: dict[int, int] = {}
+    for i in range(MAX_UNITS):
         unit = save.get_unit(i)
-        if unit and (unit.character_id != 0 or unit.job_id != 0):
+        if unit and unit.is_recruited:
+            if seen_empty:
+                all_issues.append(
+                    ValidationIssue(
+                        i,
+                        "ERROR",
+                        "roster",
+                        f"Recruited unit at slot {i + 1} appears after an empty slot (non-contiguous roster)",
+                    )
+                )
+            r_idx = unit.roster_index
+            if r_idx in seen_roster_indices:
+                all_issues.append(
+                    ValidationIssue(
+                        i,
+                        "ERROR",
+                        "roster_index",
+                        (
+                            f"Duplicate roster_index {r_idx} on Unit {i + 1} "
+                            f"(already used by Unit {seen_roster_indices[r_idx] + 1})"
+                        ),
+                    )
+                )
+            else:
+                seen_roster_indices[r_idx] = i
             all_issues.extend(validate_unit(unit))
+        else:
+            seen_empty = True
+
     return all_issues

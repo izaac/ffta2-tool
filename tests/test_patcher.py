@@ -782,10 +782,13 @@ def test_operations_idempotent():
     def rename_ops(save):
         save.clan_name = "Kupo"
         save.rename_unit(0, "Ramza")
-        save.rename_unit(1, "Frimelda")
+        save.rename_unit(1, "Alde")
+
+    def clan_name_op(save):
+        save.clan_name = "Ivalice"
 
     def inject_slot7(save):
-        save.inject_unit("viera", level=50, name="Frimelda", unit_index=6, master_abilities=True)
+        save.inject_unit("viera", level=50, name="Acia", unit_index=6, master_abilities=True, force=True)
 
     def equip_slot2(save):
         from ffta2_tool.patcher import equip_unit_build
@@ -800,6 +803,7 @@ def test_operations_idempotent():
         "set-difficulty slot 2": (1, via_save(1, set_hard)),
         "master-abilities": (0, via_save(0, FFTA2Save.master_all_unit_abilities)),
         "clan --all": (1, via_save(1, clan_all)),
+        "clan --clan-name slot 2": (1, via_save(1, clan_name_op)),
         "rename slot 2": (1, via_save(1, rename_ops)),
         "inject unit 7 slot 2": (1, via_save(1, inject_slot7)),
         "equip-build unit 2 slot 2": (1, via_save(1, equip_slot2)),
@@ -859,135 +863,265 @@ def test_character_names_and_charset():
         CHARACTER_NAMES,
         get_character_name,
         get_default_name_id_for_race,
+        get_race_name_pool,
         resolve_character_name_id,
     )
-    from ffta2_tool.charset import decode_ffta2_string, encode_ffta2_string
+    from ffta2_tool.charset import MAX_CUSTOM_NAME_CHARS, decode_ffta2_string, encode_ffta2_string
 
     assert len(CHARACTER_NAMES) == 779
+    assert MAX_CUSTOM_NAME_CHARS == 9
     assert get_character_name(0x8001) == "Luso"
     assert get_character_name(0x8003) == "Adelle"
     assert get_character_name(48) == "Frimelda"
     assert get_character_name(109) == "Ganoslal"
     assert get_character_name(408) == "Yuma"
 
-    # Exact case-insensitive name lookup, numeric ID, and race-appropriate default
-    assert resolve_character_name_id("frimelda") == 48
-    assert resolve_character_name_id("Ganoslal") == 109
-    assert resolve_character_name_id("408") == 408
-    assert resolve_character_name_id("0x8005") == 0x8005
+    # Generic race pool resolution succeeds for matching race
+    assert resolve_character_name_id("Ganoslal", race_id=1) == 109
+    assert resolve_character_name_id("408", race_id=4) == 408
+    assert resolve_character_name_id(408, race_id=4) == 408
     nid = resolve_character_name_id("random", race_id=4)
-    assert 281 <= nid <= 429 and get_default_name_id_for_race(4, 2) in range(281, 430)
+    assert nid in get_race_name_pool(4)
+    assert get_default_name_id_for_race(4, 2) in get_race_name_pool(4)
+
+    # High-bit (0x8000) values and out-of-range IDs are always rejected
+    for bad_id in (0, -1, 779, 0x8001, 0x8005, "0x8005", "0", "779"):
+        try:
+            resolve_character_name_id(bad_id, race_id=1, allow_any_pool=True)
+            raise AssertionError(f"resolve_character_name_id accepted {bad_id!r}")
+        except ValueError:
+            pass
+
+    # Story names (Luso, Cid, Vaan, Frimelda, "-") and wrong-race pools are rejected unless allow_any_pool=True
+    for story_or_wrong in ("Luso", "Cid", "Vaan", "Frimelda", "-", "Yuma", 408):
+        try:
+            resolve_character_name_id(story_or_wrong, race_id=1, allow_any_pool=False)
+            raise AssertionError(f"resolve_character_name_id accepted {story_or_wrong!r} for Hume without force")
+        except ValueError:
+            pass
+    assert resolve_character_name_id("Frimelda", race_id=1, allow_any_pool=True) == 48
+    assert resolve_character_name_id("Yuma", race_id=1, allow_any_pool=True) == 408
 
     # Roundtrip charset encoding with letters, digits, and punctuation
-    for text in ("Luso", "Gully", "Clan 99!", "A-B's?"):
+    for text in ("Luso", "Gully", "Clan 99!", "A-B's?", "R,D.1:2"):
         encoded = encode_ffta2_string(text, length=20)
         assert len(encoded) == 20
+        assert encoded[-1] == 0
         assert decode_ffta2_string(encoded) == text
+
+    # Unsupported characters and missing-terminator buffer overflow raise ValueError
+    for bad_text in ("Ramza@", "Clan#1", "Name$9", "Luso\n", "A" * 20):
+        try:
+            encode_ffta2_string(bad_text, length=20)
+            raise AssertionError(f"encode_ffta2_string accepted {bad_text!r}")
+        except ValueError:
+            pass
     print("[PASS] Character names table and FFTA2 string encoding/decoding verified.")
 
 
 def test_rename_unit_and_clan():
-    """Verify renaming Luso (custom string), generic units (ROM table), and the clan."""
-    from ffta2_tool.slots import SlotManager
+    """Verify renaming Luso (custom string), generic units (ROM race pool), and clan name with slot isolation."""
+    import warnings
 
-    save = FFTA2Save(EXAMPLE_SAVE)
-    assert save.leader_name == "Luso"
-    assert save.clan_name == "Gully"
-    assert save.get_unit_name(0) == "Luso"
-    assert save.get_unit_name(1) == "Ganoslal"
-    assert save.get_unit_name(2) == "Yuma"
+    from ffta2_tool.slots import SLOT_RECORD_SIZE, SlotManager
 
-    # Rename Luso and clan with custom strings
-    assert save.rename_unit(0, "Ramza") == "Ramza"
-    save.clan_name = "Beoulve"
-    assert save.leader_name == "Ramza"
-    assert save.clan_name == "Beoulve"
-    assert save.get_unit_name(0) == "Ramza"
+    two_slot_bytes = _two_slot_example()
+    base_sm = SlotManager(two_slot_bytes)
+    s2_off = base_sm.record_offset(1)
+    s2_record_before = two_slot_bytes[s2_off : s2_off + SLOT_RECORD_SIZE]
 
-    # Rename generic unit 2 (index 1) by ROM table name and by ID
-    assert save.rename_unit(1, "Frimelda") == "Frimelda"
-    assert save.get_unit_name(1) == "Frimelda"
-    assert save.get_unit(1).name_id == 48
-
-    assert save.rename_unit(1, "408") == "Yuma"
-    assert save.get_unit_name(1) == "Yuma"
-    assert save.get_unit(1).name_id == 408
-
-    # Reject unknown ROM name on non-leader unit
-    try:
-        save.rename_unit(1, "NotARomName")
-        raise AssertionError("rename_unit accepted unknown ROM name on non-leader")
-    except ValueError as e:
-        assert "ROM character name table" in str(e)
-
-    # Verify save/reload and load-screen preview leader_name sync
     with tempfile.NamedTemporaryFile(suffix=".sav", delete=False) as tmp:
         tmp_path = Path(tmp.name)
+        tmp_path.write_bytes(two_slot_bytes)
+
     try:
+        save = FFTA2Save(tmp_path, slot=0)
+        assert save.leader_name == "Luso"
+        assert save.clan_name == "Gully"
+        assert save.get_unit_name(0) == "Luso"
+        assert save.get_unit_name(1) == "Ganoslal"
+        assert save.get_unit_name(2) == "Yuma"
+
+        # 1. Rename Luso (up to 9-char cap) and clan with custom strings
+        assert save.rename_unit(0, "RamzaBeou") == "RamzaBeou"
+        save.clan_name = "Ivalice99"
+        assert save.leader_name == "RamzaBeou"
+        assert save.clan_name == "Ivalice99"
+        assert save.get_unit_name(0) == "RamzaBeou"
+        assert save.get_unit(0).name_id == 0x8001
+
+        # 2. Luso refuses ROM IDs and "random"
+        for bad_luso in (109, "109", "0x006D", "random"):
+            try:
+                save.rename_unit(0, bad_luso)
+                raise AssertionError(f"Luso accepted {bad_luso!r}")
+            except ValueError:
+                pass
+
+        # 3. Over-cap (>9 chars) and bad characters raise on leader_name and clan_name
+        for bad_custom in ("TenCharNam", " fifteenchars123 ", "Bad@Name", ""):
+            try:
+                save.rename_unit(0, bad_custom)
+                raise AssertionError(f"leader_name accepted {bad_custom!r}")
+            except ValueError:
+                pass
+            try:
+                save.clan_name = bad_custom
+                raise AssertionError(f"clan_name accepted {bad_custom!r}")
+            except ValueError:
+                pass
+
+        # 4. Generic unit (Unit 2, index 1, Nu Mou -> Male pool 68..265) accepts pool name/ID
+        assert save.rename_unit(1, "Alde") == "Alde"
+        assert save.get_unit_name(1) == "Alde"
+        assert save.get_unit(1).name_id == 72
+
+        # Generic unit (Unit 3, index 2, Viera -> Female pool 281..429) accepts Viera pool ID
+        assert save.rename_unit(2, "408") == "Yuma"
+        assert save.get_unit(2).name_id == 408
+
+        # 5. Generic unit rejects story names and wrong-race names unless force=True
+        for rejected in ("Frimelda", "Vaan", "Luso", "Yuma", 408, "NotARomName"):
+            try:
+                save.rename_unit(1, rejected)
+                raise AssertionError(f"Generic Nu Mou unit accepted {rejected!r} without force")
+            except ValueError:
+                pass
+        assert save.rename_unit(1, "Frimelda", force=True) == "Frimelda"
+        assert save.rename_unit(1, "Alde") == "Alde"
+
+        # 6. Duplicate name across clan units emits UserWarning
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", UserWarning)
+            save.rename_unit(3, "Alde")  # Unit 4 (Bangaa) shares Male pool with Unit 2
+            assert any("already used" in str(w.message) for w in caught)
+
+        # 7. Empty unit slot is refused
+        try:
+            save.rename_unit(6, "Alde")
+            raise AssertionError("rename_unit accepted empty unit slot")
+        except ValueError as e:
+            assert "empty" in str(e)
+
+        # 8. Save/reload updates load-screen preview leader_name and leaves Slot 2 record untouched
         save.save(tmp_path, backup=False)
-        reloaded = FFTA2Save(tmp_path)
-        assert reloaded.leader_name == "Ramza"
-        assert reloaded.clan_name == "Beoulve"
-        assert reloaded.get_unit_name(0) == "Ramza"
-        assert reloaded.get_unit_name(1) == "Yuma"
-        sm = SlotManager(tmp_path.read_bytes())
-        assert sm.get_slot_preview(0)["leader_name"] == "Ramza"
+        reloaded = FFTA2Save(tmp_path, slot=0)
+        assert reloaded.leader_name == "RamzaBeou"
+        assert reloaded.clan_name == "Ivalice99"
+        assert reloaded.get_unit_name(0) == "RamzaBeou"
+        assert reloaded.get_unit_name(1) == "Alde"
+        after_bytes = tmp_path.read_bytes()
+        sm = SlotManager(after_bytes)
+        assert sm.get_slot_preview(0)["leader_name"] == "RamzaBeou"
+        assert after_bytes[s2_off : s2_off + SLOT_RECORD_SIZE] == s2_record_before, "Slot 2 record was modified"
+        assert not [i for i in validate_save(reloaded) if i.severity == "ERROR"]
     finally:
         if tmp_path.exists():
             tmp_path.unlink()
-    print("[PASS] Unit and clan renaming verified with load-screen preview sync.")
+    print("[PASS] Unit and clan renaming verified with cap, race pools, preview sync, and slot isolation.")
 
 
 def test_inject_unit():
-    """Verify injecting new recruits by build key, job name, and hex job ID."""
-    from ffta2_tool.slots import SlotManager
+    """Verify injecting new recruits, template cloning, contiguity, slot refusal rules, and slot isolation."""
+    from ffta2_tool.save import UNIT_STRIDE, UNIT_TABLE_BASE
+    from ffta2_tool.slots import SLOT_RECORD_SIZE, SlotManager
 
-    save = FFTA2Save(EXAMPLE_SAVE)
-    assert sum(1 for u in save.units if u.is_recruited) == 6
+    two_slot_bytes = _two_slot_example()
+    base_sm = SlotManager(two_slot_bytes)
+    s2_off = base_sm.record_offset(1)
+    s2_record_before = two_slot_bytes[s2_off : s2_off + SLOT_RECORD_SIZE]
 
-    # 1. Inject by build key into next available slot (index 6 -> Unit 7)
-    idx1, u1 = save.inject_unit("viera", level=50, name="Frimelda")
-    assert idx1 == 6
-    assert u1.is_recruited
-    assert u1.job_id == 0x27  # Red Mage
-    assert u1.race_id == 4  # Viera
-    assert u1.roster_index == 7
-    assert u1.status_flags == 0x0080
-    assert u1.level == 50
-    assert u1.weapon_id == 0x0050  # Femme Fatale
-    assert save.get_unit_name(idx1) == "Frimelda"
-
-    # 2. Inject by job name into next available slot (index 7 -> Unit 8) with mastered abilities
-    idx2, u2 = save.inject_unit("Nu Mou Sage", level=99, master_abilities=True)
-    assert idx2 == 7
-    assert u2.job_id == 0x1F  # Sage
-    assert u2.race_id == 3  # Nu Mou
-    assert u2.roster_index == 8
-    assert u2.level == 99
-
-    # 3. Inject by hex job ID into explicit slot (index 10 -> Unit 11)
-    idx3, u3 = save.inject_unit("0x08", level=30, unit_index=10)
-    assert idx3 == 10
-    assert u3.job_id == 0x08  # Parivir
-    assert u3.race_id == 1  # Hume
-    assert u3.roster_index == 11
-    assert u3.level == 30
-
-    # Validator must report 0 errors on save with injected units
-    errors = [i for i in validate_save(save) if i.severity == "ERROR"]
-    assert not errors, f"Unexpected validation errors after inject_unit: {errors}"
-
-    # Verify save/reload updates preview member_count to 9 (6 original + 3 injected)
     with tempfile.NamedTemporaryFile(suffix=".sav", delete=False) as tmp:
         tmp_path = Path(tmp.name)
+        tmp_path.write_bytes(two_slot_bytes)
+
     try:
+        save = FFTA2Save(tmp_path, slot=0)
+        assert sum(1 for u in save.units if u.is_recruited) == 6
+        units_0_to_5_before = [bytes(save.get_unit(i)._data) for i in range(6)]
+        units_7_to_23_before = [bytes(save.get_unit(i)._data) for i in range(7, 24)]
+
+        # 1. Refuses slot 0 (Luso) even with force=True
+        for f_flag in (False, True):
+            try:
+                save.inject_unit("viera", unit_index=0, force=f_flag)
+                raise AssertionError("inject_unit allowed slot 0")
+            except ValueError as e:
+                assert "Luso" in str(e)
+
+        # 2. Refuses occupied slot (1..5) without force=True
+        try:
+            save.inject_unit("viera", unit_index=2, force=False)
+            raise AssertionError("inject_unit allowed overwriting occupied slot without force")
+        except ValueError as e:
+            assert "already occupied" in str(e)
+
+        # 3. Refuses injecting into a gap (slot 8 / index 7 when slot 7 / index 6 is empty)
+        try:
+            save.inject_unit("viera", unit_index=7)
+            raise AssertionError("inject_unit allowed creating a roster hole at index 7")
+        except ValueError as e:
+            assert "contiguous" in str(e) or "empty" in str(e)
+
+        # 4. Inject into first free slot (index 6 -> Unit 7) using valid Viera pool name
+        idx1, u1 = save.inject_unit("viera", level=50, name="Acia")
+        assert idx1 == 6
+        assert u1.is_recruited
+        assert u1.character_id == 0
+        assert u1.job_id == 0x27  # Red Mage
+        assert u1.race_id == 4  # Viera
+        assert u1.roster_index == 7
+        assert u1.status_flags == 0x0080
+        assert u1.level == 50
+        assert u1.cur_hp == u1.max_hp and u1.max_hp > 0
+        assert u1.cur_mp == 0 and u1.max_mp > 0
+        assert bytes(u1._data[0x25:0x2E]) == b"\x01" * 9
+        assert u1.weapon_id == 0x0050  # Femme Fatale
+        assert save.get_unit_name(idx1) == "Acia"
+
+        # Untouched units 0..5 and 7..23 are byte-identical
+        assert [bytes(save.get_unit(i)._data) for i in range(6)] == units_0_to_5_before
+        assert [bytes(save.get_unit(i)._data) for i in range(7, 24)] == units_7_to_23_before
+
+        # 5. Save -> Load stability and Slot 2 byte-isolation
         save.save(tmp_path, backup=False)
-        sm = SlotManager(tmp_path.read_bytes())
-        assert sm.get_slot_preview(0)["member_count"] == 9
+        after_first_save = tmp_path.read_bytes()
+        assert after_first_save[s2_off : s2_off + SLOT_RECORD_SIZE] == s2_record_before
+        reloaded = FFTA2Save(tmp_path, slot=0)
+        assert bytes(reloaded.get_unit(6)._data) == bytes(u1._data)
+        sm = SlotManager(after_first_save)
+        assert sm.get_slot_preview(0)["member_count"] == 7
+        assert not [i for i in validate_save(reloaded) if i.severity == "ERROR"]
+
+        # 6. Fill roster up to 24 units and verify full-roster refusal on the 25th
+        for expected_idx in range(7, 24):
+            idx_n, u_n = reloaded.inject_unit("Parivir", level=30)
+            assert idx_n == expected_idx
+            assert u_n.roster_index == expected_idx + 1
+        assert sum(1 for u in reloaded.units if u.is_recruited) == 24
+        assert not [i for i in validate_save(reloaded) if i.severity == "ERROR"]
+
+        try:
+            reloaded.inject_unit("Parivir", level=30)
+            raise AssertionError("inject_unit allowed injecting into a full 24/24 roster")
+        except ValueError as e:
+            assert "full" in str(e).lower()
+
+        # 7. Verify roster hole detection when an intermediate unit is zeroed out
+        reloaded.plaintext[UNIT_TABLE_BASE + 3 * UNIT_STRIDE : UNIT_TABLE_BASE + 4 * UNIT_STRIDE] = (
+            b"\x00" * UNIT_STRIDE
+        )
+        try:
+            reloaded.inject_unit("Parivir", level=30)
+            raise AssertionError("inject_unit allowed injecting when roster has a hole")
+        except ValueError as e:
+            assert "hole" in str(e).lower()
+        hole_issues = [i for i in validate_save(reloaded) if i.severity == "ERROR" and i.field == "roster"]
+        assert hole_issues, "validate_save must flag non-contiguous roster hole"
     finally:
         if tmp_path.exists():
             tmp_path.unlink()
-    print("[PASS] Recruit injection verified for build keys, job names, and hex IDs.")
+    print("[PASS] Recruit injection verified for contiguity, slot guards, template overrides, and slot isolation.")
 
 
 def test_equip_unit_build():
@@ -1036,7 +1170,7 @@ def test_cli_new_commands():
         backups = list(bdir.glob("test.sav.bak_*"))
         assert len(backups) == 1
 
-        # 2. Rename unit 1 and clan
+        # 2. Rename unit 1 and clan (within 9-char cap)
         run_cli(
             "rename",
             str(sav),
@@ -1053,7 +1187,7 @@ def test_cli_new_commands():
         assert reloaded.leader_name == "Ramza"
         assert reloaded.clan_name == "Beoulve"
 
-        # 3. Inject unit 7
+        # 3. Inject unit 7 with a valid Viera race-pool name ("Acia")
         run_cli(
             "inject",
             str(sav),
@@ -1064,15 +1198,15 @@ def test_cli_new_commands():
             "--level",
             "60",
             "--name",
-            "Frimelda",
+            "Acia",
             "--master-abilities",
         )
         reloaded = FFTA2Save(sav)
         assert reloaded.get_unit(6).is_recruited
         assert reloaded.get_unit(6).level == 60
-        assert reloaded.get_unit_name(6) == "Frimelda"
+        assert reloaded.get_unit_name(6) == "Acia"
 
-        # 4. Equip build on unit 7
+        # 4. Equip build on unit 7 (using Viera build to match unit 7's Viera race-pool name)
         run_cli(
             "equip-build",
             str(sav),
@@ -1081,11 +1215,11 @@ def test_cli_new_commands():
             "--unit",
             "7",
             "--build",
-            "bangaa",
+            "viera",
             "--master-abilities",
         )
         reloaded = FFTA2Save(sav)
-        assert reloaded.get_unit(6).job_id == 0x16  # Cannoneer
+        assert reloaded.get_unit(6).job_id == 0x27  # Red Mage
     print("[PASS] CLI subcommands backup, rename, inject, and equip-build verified.")
 
 

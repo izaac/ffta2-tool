@@ -108,15 +108,40 @@ def cmd_backup(args: argparse.Namespace) -> int:
     return 0
 
 
+def _format_issue_target(unit_index: int) -> str:
+    return "Save" if unit_index < 0 else f"Unit {unit_index + 1}"
+
+
+def _run_pre_write_gate(save: FFTA2Save, context: str) -> bool:
+    """Run validate_save before writing; print errors and return False if any ERROR is found."""
+    errors = [i for i in validate_save(save) if i.severity == "ERROR"]
+    if errors:
+        print(f"[ERROR] {context} failed validation with {len(errors)} errors! Aborting save.", file=sys.stderr)
+        for iss in errors:
+            print(
+                f"  [{iss.severity}] {_format_issue_target(iss.unit_index)} ({iss.field}): {iss.message}",
+                file=sys.stderr,
+            )
+        return False
+    return True
+
+
 def cmd_rename(args: argparse.Namespace) -> int:
+    import warnings
+
     slot_idx = _slot_idx(args)
     save = FFTA2Save(args.save_file, slot=slot_idx)
     changes: list[str] = []
+    force = bool(getattr(args, "force", False))
 
     if getattr(args, "name", None) is not None:
         unit_idx = args.unit - 1
         old_name = save.get_unit_name(unit_idx)
-        new_name = save.rename_unit(unit_idx, args.name)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", UserWarning)
+            new_name = save.rename_unit(unit_idx, args.name, force=force)
+        for w in caught:
+            print(f"[WARNING] {w.message}")
         changes.append(f"Unit {args.unit}: '{old_name}' -> '{new_name}'")
 
     if getattr(args, "clan_name", None) is not None:
@@ -128,30 +153,37 @@ def cmd_rename(args: argparse.Namespace) -> int:
         print("Error: Specify --name/-n to rename a unit or --clan-name to rename the clan.", file=sys.stderr)
         return 1
 
+    if not _run_pre_write_gate(save, "Rename"):
+        return 1
+
     out_path = _save_with_args(save, args)
     print(f"[SUCCESS] Slot {slot_idx + 1} renamed ({', '.join(changes)}): {out_path}!")
     return 0
 
 
 def cmd_inject(args: argparse.Namespace) -> int:
+    import warnings
+
     slot_idx = _slot_idx(args)
     save = FFTA2Save(args.save_file, slot=slot_idx)
     target_unit = getattr(args, "unit", None)
     unit_idx = target_unit - 1 if target_unit is not None else None
+    force = bool(getattr(args, "force", False))
 
-    injected_idx, unit = save.inject_unit(
-        args.job,
-        level=args.level,
-        name=args.name,
-        unit_index=unit_idx,
-        master_abilities=args.master_abilities,
-    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", UserWarning)
+        injected_idx, unit = save.inject_unit(
+            args.job,
+            level=args.level,
+            name=args.name,
+            unit_index=unit_idx,
+            master_abilities=args.master_abilities,
+            force=force,
+        )
+    for w in caught:
+        print(f"[WARNING] {w.message}")
 
-    issues = [i for i in validate_unit(unit) if i.severity == "ERROR"]
-    if issues:
-        print(f"[ERROR] Injected unit failed validation with {len(issues)} errors:", file=sys.stderr)
-        for iss in issues:
-            print(f"  [{iss.severity}] {iss.field}: {iss.message}", file=sys.stderr)
+    if not _run_pre_write_gate(save, f"Injected Unit {injected_idx + 1}"):
         return 1
 
     out_path = _save_with_args(save, args)
@@ -180,11 +212,7 @@ def cmd_equip_build(args: argparse.Namespace) -> int:
     unit = save.get_unit(unit_idx)
     assert unit is not None
 
-    issues = [i for i in validate_unit(unit) if i.severity == "ERROR"]
-    if issues:
-        print(f"[ERROR] Build '{args.build}' on Unit {args.unit} failed validation:", file=sys.stderr)
-        for iss in issues:
-            print(f"  [{iss.severity}] {iss.field}: {iss.message}", file=sys.stderr)
+    if not _run_pre_write_gate(save, f"Build '{args.build}' on Unit {args.unit}"):
         return 1
 
     out_path = _save_with_args(save, args)
@@ -207,7 +235,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
         return 0
     print(f"[FAIL] Found {len(issues)} stability issues in Slot {slot_idx + 1}:")
     for iss in issues:
-        print(f"  [{iss.severity}] Unit {iss.unit_index + 1} ({iss.field}): {iss.message}")
+        print(f"  [{iss.severity}] {_format_issue_target(iss.unit_index)} ({iss.field}): {iss.message}")
     return 1
 
 
@@ -290,6 +318,9 @@ def cmd_clan(args: argparse.Namespace) -> int:
             "No clan options specified. Use --all, --gil, --cp, --privileges, --talents, or --clan-name.",
             file=sys.stderr,
         )
+        return 1
+
+    if not _run_pre_write_gate(save, "Clan update"):
         return 1
 
     out_path = _save_with_args(save, args)
@@ -518,9 +549,18 @@ def main() -> None:
     p_ren.add_argument(
         "--name",
         "-n",
-        help="New unit name (freeform string for Unit 1; ROM name, ID, or 'random' for Units 2..24)",
+        help=(
+            "New unit name (freeform string up to 9 chars for Unit 1; "
+            "race-pool ROM name, ID, or 'random' for Units 2..24)"
+        ),
     )
-    p_ren.add_argument("--clan-name", help="New custom clan name (up to 15 characters)")
+    p_ren.add_argument("--clan-name", help="New custom clan name (up to 9 characters)")
+    p_ren.add_argument(
+        "--force",
+        "-f",
+        action="store_true",
+        help="Allow story or cross-race ROM names on generic units (2..24)",
+    )
     _add_common_write_args(p_ren)
     p_ren.set_defaults(func=cmd_rename)
 
@@ -552,12 +592,18 @@ def main() -> None:
         type=int,
         choices=range(1, 25),
         default=None,
-        help="Target unit slot (1..24; uses first empty slot if omitted)",
+        help="Target unit slot (2..24; uses first empty slot if omitted)",
     )
     p_inj.add_argument(
         "--master-abilities",
         action="store_true",
         help="Master all abilities on the injected recruit",
+    )
+    p_inj.add_argument(
+        "--force",
+        "-f",
+        action="store_true",
+        help="Allow overwriting an occupied non-Luso unit slot or using a story/cross-race ROM name",
     )
     _add_common_write_args(p_inj)
     p_inj.set_defaults(func=cmd_inject)
