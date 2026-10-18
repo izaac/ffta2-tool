@@ -18,16 +18,34 @@ CHECKSUM_SIZE = 4
 ENCRYPTED_START = 0x01C0
 ENCRYPTED_SIZE = 0x3400
 ENCRYPTED_END = ENCRYPTED_START + ENCRYPTED_SIZE  # 0x35C0
-KEY_PAD_OFFSET = 0x1000
 KEY_SIZE = 256
 CHECKSUM_RANGE_COUNT = 0x3408  # Record header (0x01B8) through 0x35BF
 
 
-def extract_keystream(save_bytes: bytes) -> bytes:
-    """Extract the 256-byte additive keystream from the save padding."""
-    if len(save_bytes) < KEY_PAD_OFFSET + KEY_SIZE:
-        raise ValueError(f"Save file too small ({len(save_bytes)} bytes) to extract keystream")
-    return save_bytes[KEY_PAD_OFFSET : KEY_PAD_OFFSET + KEY_SIZE]
+def extract_keystream(save_bytes: bytes, header_offset: int = RECORD_HEADER_OFFSET) -> bytes:
+    """Extract and generate the 256-byte additive keystream from the record header seed.
+
+    ARM9 binary (0x0210CF74 / 0x0210CF84 / 0x0210D740):
+    The 8-bit seed at header_offset + 6 initializes an LCG: state = (5 * state + 1) & 0xFF.
+    Because the cipher loop starts at offset 0x01C0 (RECORD_HEADER_OFFSET + 8),
+    the generated cycle is aligned so key[i % 256] matches byte position i.
+    """
+    seed_offset = header_offset + 6
+    if len(save_bytes) <= seed_offset:
+        raise ValueError(f"Save file too small ({len(save_bytes)} bytes) to extract keystream seed")
+    seed = save_bytes[seed_offset]
+
+    seq = bytearray(KEY_SIZE)
+    state = seed & 0xFF
+    for step in range(KEY_SIZE):
+        state = (5 * state + 1) & 0xFF
+        seq[step] = state
+
+    key = bytearray(KEY_SIZE)
+    shift = ENCRYPTED_START % KEY_SIZE
+    for i in range(KEY_SIZE):
+        key[i] = seq[(i - shift) % KEY_SIZE]
+    return bytes(key)
 
 
 def decrypt_save_payload(data: bytearray, key: bytes) -> bytearray:
