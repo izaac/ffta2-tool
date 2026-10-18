@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # High-level FFTA2 melonDS flows on top of mds.sh. Steps run in order:
 #   boot                 start + wait for title, press A -> load list
 #   shot:<name>          screenshot (DS screens, 2x)
@@ -6,17 +6,33 @@
 #   flag:<name>          GDB read flag4 (0x0212D838) -> <sdir>/<name>.flag
 #   save:<1|2>:<ow>      world map -> X menu -> System -> Save -> slot; ow=1 confirms overwrite
 #   stop:<out.sav>       quit melonDS and copy the save
-# usage: flow.sh <sdir> <sav> <gdb_port> step...
-set -euo pipefail
-M=/tmp/opencode/mds.sh
+# usage: MDS=/path/mds.sh flow.sh <sdir> <sav> <gdb_port> step...
+set -eu
+M="${MDS:-/tmp/opencode/mds.sh}"
 S="$(realpath -m "$1")"; SAV="$(realpath -m "$2")"; PORT="$3"; shift 3
 mkdir -p "$S"; LOG="$S/flow.log"; : >"$LOG"
 log() { echo "[$(date +%T)] $*" | tee -a "$LOG"; }
+# run_log <mds args...>: run the driver, stream stdout into the flow log,
+# propagate the driver's exit code (incl. stop's 3 = save unchanged since boot)
+run_log() {
+    rc=0; out=$("$M" "$@") || rc=$?
+    printf '%s\n' "$out" | tee -a "$LOG"
+    return "$rc"
+}
 for step in "$@"; do
-    IFS=: read -r op a1 a2 <<<"$step"
+    op=${step%%:*}
+    case $step in
+        *:*) r1=${step#*:} ;;
+        *) r1="" ;;
+    esac
+    case $r1 in
+        *:*) a1=${r1%%:*}; a2=${r1#*:} ;;
+        "") a1=""; a2="" ;;
+        *) a1=$r1; a2="" ;;
+    esac
     case "$op" in
     boot)
-        $M start "$S" "$SAV" "$PORT" | tee -a "$LOG"
+        run_log start "$S" "$SAV" "$PORT"
         sleep 27
         $M seq "$S" "a:0.5:4"
         ;;
@@ -54,7 +70,9 @@ raw = open('$SAV', 'rb').read(); print(raw[active_metadata_base(raw) + 0x0A] + 1
         $M seq "$S" "a:0.6:4"
         log "saved slot $a1 (overwrite=${a2:-0})"
         ;;
-    stop) $M stop "$S" "$a1" | tee -a "$LOG" ;;
+    stop)
+        if [ -n "$a1" ]; then run_log stop "$S" "$a1"; else run_log stop "$S"; fi
+        ;;
     *) log "bad step $step"; exit 2 ;;
     esac
 done
