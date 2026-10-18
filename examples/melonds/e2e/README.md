@@ -68,14 +68,15 @@ python3 -m ffta2_tool.cli inject "$ROM" --job "Red Mage" --level 50 -u 7 --maste
 examples/melonds/e2e/scenarios/run_e3.sh
 
 # e4: fill the roster to 24/24 and scroll the whole roster screen
-examples/melonds/e2e/scenarios/run_e4.sh   # prep = loop of inject (see below)
-for j in Parivir "Cannoneer" "Ranger" "Bishop"; do
-  python3 -m ffta2_tool.cli inject "$ROM" --job "$j" --level 30 --force
-done
+# (from 6 members you need 18 injections; see WALKTHROUGH.md E4 prep loop)
+examples/melonds/e2e/scenarios/run_e4.sh
 ```
 
 Each scenario writes PNGs and the in-game-saved `.sav` back into
 `$OUT_DIR/e2e/`, named like the HARDEN_REPORT evidence (e1_01..., e3_03...).
+
+Read `WALKTHROUGH.md` for the full step-by-step walkthrough with per-step
+screenshots, expected results, and fragility notes.
 
 ## e5 (battle) —Traveler's Way proof, in progress
 
