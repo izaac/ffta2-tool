@@ -2,6 +2,8 @@
 
 Technical reference for *Final Fantasy Tactics A2: Grimoire of the Rift* (Nintendo DS) save data structure and ARM9 binary routines.
 
+Companion map: see `docs/save_format_map.md` for a consolidated address/offset map with the relationships between file, metadata copies, records, payload fields and ARM9 RAM addresses.
+
 ---
 
 ## 1. High-Level Memory & Save Layout
