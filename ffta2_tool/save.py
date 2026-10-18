@@ -6,10 +6,16 @@ import glob
 import os
 import shutil
 import struct
+import warnings
 from datetime import datetime
 from pathlib import Path
 
-from ffta2_tool.charset import decode_ffta2_string, encode_ffta2_string
+from ffta2_tool.charset import (
+    CUSTOM_NAME_BUFFER_LEN,
+    MAX_CUSTOM_NAME_CHARS,
+    decode_ffta2_string,
+    encode_ffta2_string,
+)
 from ffta2_tool.config import get_default_backup_dir
 from ffta2_tool.crypto import (
     CHECKSUM_OFFSET,
@@ -29,10 +35,9 @@ from ffta2_tool.mappings import (
 )
 
 # Custom Clan and Leader name buffers in the decrypted save payload (20 bytes each)
+# In-game Name Entry (OVL_12 0x02135FE8 & 0x02135FFC) caps both at 9 chars (MAX_CUSTOM_NAME_CHARS = 9).
 OFF_CLAN_NAME = 0x01D8  # payload + 0x18 (ARM9 0x020FA398)
 OFF_LEADER_NAME = 0x01EC  # payload + 0x2C (ARM9 0x020FA380)
-CUSTOM_NAME_BUFFER_LEN = 20
-MAX_CUSTOM_NAME_CHARS = 15
 
 # Party units in the decrypted save file
 UNIT_TABLE_BASE = 0x0238  # Unit 0 starts at 0x0238
@@ -55,10 +60,13 @@ OFF_UNIT_EXP = 0x23  # 1 byte
 OFF_UNIT_SPEED = 0x24  # 1 byte
 OFF_UNIT_BASE_FLAGS_START = 0x25  # 9 bytes (0x25..0x2D initialized to 0x01 on recruited units)
 OFF_UNIT_BASE_FLAGS_END = 0x2E
-OFF_UNIT_MAX_HP = 0x3C  # 16-bit
-OFF_UNIT_CUR_HP = 0x3E  # 16-bit
-OFF_UNIT_MAX_MP = 0x40  # 16-bit
-OFF_UNIT_CUR_MP = 0x42  # 16-bit
+# Verified via ARM9 0x020B9158..0x020B9194 (level_up_unit):
+# [unit_ptr + 0x34] (Unit + 0x3C) = cur_hp, [unit_ptr + 0x36] (Unit + 0x3E) = max_hp,
+# [unit_ptr + 0x38] (Unit + 0x40) = cur_mp (0 outside battle), [unit_ptr + 0x3A] (Unit + 0x42) = max_mp.
+OFF_UNIT_CUR_HP = 0x3C  # 16-bit
+OFF_UNIT_MAX_HP = 0x3E  # 16-bit
+OFF_UNIT_CUR_MP = 0x40  # 16-bit
+OFF_UNIT_MAX_MP = 0x42  # 16-bit
 OFF_UNIT_ATTACK = 0x44  # 16-bit
 OFF_UNIT_DEFENSE = 0x46  # 16-bit
 OFF_UNIT_MATK = 0x48  # 16-bit
@@ -494,6 +502,7 @@ class FFTA2Save:
         if len(clean) > MAX_CUSTOM_NAME_CHARS:
             raise ValueError(f"Leader name '{clean}' exceeds maximum length of {MAX_CUSTOM_NAME_CHARS} characters")
         encoded = encode_ffta2_string(clean, length=CUSTOM_NAME_BUFFER_LEN)
+        assert decode_ffta2_string(encoded, max_len=CUSTOM_NAME_BUFFER_LEN) == clean
         self.plaintext[OFF_LEADER_NAME : OFF_LEADER_NAME + CUSTOM_NAME_BUFFER_LEN] = encoded
 
     @property
@@ -509,6 +518,7 @@ class FFTA2Save:
         if len(clean) > MAX_CUSTOM_NAME_CHARS:
             raise ValueError(f"Clan name '{clean}' exceeds maximum length of {MAX_CUSTOM_NAME_CHARS} characters")
         encoded = encode_ffta2_string(clean, length=CUSTOM_NAME_BUFFER_LEN)
+        assert decode_ffta2_string(encoded, max_len=CUSTOM_NAME_BUFFER_LEN) == clean
         self.plaintext[OFF_CLAN_NAME : OFF_CLAN_NAME + CUSTOM_NAME_BUFFER_LEN] = encoded
 
     @property
@@ -560,13 +570,28 @@ class FFTA2Save:
             return self.leader_name or "Luso"
         return unit.name
 
-    def rename_unit(self, unit_index: int, new_name: str | int) -> str:
+    def _warn_duplicate_unit_name(self, target_idx: int, display_name: str) -> None:
+        """Emit a UserWarning if another recruited unit already uses `display_name`."""
+        for other in self.units:
+            if (
+                other.index != target_idx
+                and other.is_recruited
+                and self.get_unit_name(other.index).lower() == display_name.lower()
+            ):
+                warnings.warn(
+                    f"Unit name '{display_name}' is already used by Unit {other.index + 1}",
+                    UserWarning,
+                    stacklevel=3,
+                )
+                break
+
+    def rename_unit(self, unit_index: int, new_name: str | int, force: bool = False) -> str:
         """Rename a recruited unit (0..23) and return the resulting display name.
 
-        - Unit 0 (Luso / character_id 1): writes a custom string to 0x01EC and sets
-          name_id = 0x8001 (unless an explicit integer ROM name ID > 1 is given).
-        - Units 1..23: resolves new_name against the 778 ROM character names table
-          (or accepts a numeric ID 1..778 or 'random') and updates unit.name_id.
+        - Unit 0 (Luso / character_id 1): custom string only (written to 0x01EC,
+          name_id stays 0x8001). ROM IDs and 'random' are refused.
+        - Units 1..23: resolves new_name against the ROM character name pool for
+          the unit's race (or any ROM name 1..778 if `force=True`).
         """
         unit = self.get_unit(unit_index)
         if unit is None:
@@ -574,19 +599,26 @@ class FFTA2Save:
         if not unit.is_recruited:
             raise ValueError(f"Unit slot {unit_index + 1} is empty (no recruited clan member)")
 
-        if (unit.character_id == 1 or unit_index == 0) and not isinstance(new_name, int):
+        if unit_index == 0 or unit.character_id == 1:
+            if isinstance(new_name, int):
+                raise ValueError("Luso (Unit 1) uses a custom leader name string; numeric ROM name IDs are not allowed")
             clean = str(new_name).strip()
-            if clean.lower() != "random" and not clean.isdigit() and not clean.lower().startswith("0x"):
-                self.leader_name = clean
-                unit.name_id = 0x8001
-                return self.leader_name
+            if not clean:
+                raise ValueError("Leader name cannot be empty")
+            if clean.lower() == "random" or clean.isdigit() or clean.lower().startswith("0x"):
+                raise ValueError(
+                    f"Luso (Unit 1) uses a custom leader name string; '{clean}' (ROM ID or 'random') is not allowed"
+                )
+            self.leader_name = clean
+            unit.name_id = 0x8001
+            self._warn_duplicate_unit_name(unit_index, self.leader_name)
+            return self.leader_name
 
-        resolved_id = resolve_character_name_id(new_name, race_id=unit.race_id)
-        if unit.character_id == 1:
-            unit.name_id = 0x8000 | resolved_id
-        else:
-            unit.name_id = resolved_id
-        return self.get_unit_name(unit_index)
+        resolved_id = resolve_character_name_id(new_name, race_id=unit.race_id, allow_any_pool=force)
+        unit.name_id = resolved_id
+        final_name = self.get_unit_name(unit_index)
+        self._warn_duplicate_unit_name(unit_index, final_name)
+        return final_name
 
     def inject_unit(
         self,
@@ -595,30 +627,55 @@ class FFTA2Save:
         name: str | int | None = None,
         unit_index: int | None = None,
         master_abilities: bool = False,
+        force: bool = False,
     ) -> tuple[int, Unit]:
         """Inject a new recruit into the clan roster at unit_index (or the first free slot).
 
-        `spec` may be a build key from builds.toml (e.g. 'luso', 'nu_mou', 'viera',
-        'bangaa', 'hume', 'moogle'), a job name (e.g. 'Parivir', 'Nu Mou Sage', 'Red Mage'),
-        or a job ID (e.g. 0x1F). Returns (unit_index, unit).
+        - Refuses slot 0 (Luso) under all circumstances.
+        - Requires a contiguous roster (no gaps before the first free slot).
+        - Refuses overwriting an occupied slot unless `force=True`.
+        - Clones an existing recruited non-Luso unit of the same race (falling back to
+          any recruited non-Luso unit) and overrides job, race, name_id, roster_index,
+          status_flags, level, exp, stats, ability sets, equipment, and clears learned
+          ability/AP arrays to the fresh recruit state.
         """
         from ffta2_tool.patcher import resolve_build
         from ffta2_tool.stats import compute_god_stats
 
+        # Verify contiguous existing roster (slots 0..N-1 recruited, N..23 empty)
+        recruited_indices = [u.index for u in self.units if u.is_recruited]
+        if not recruited_indices or recruited_indices[0] != 0:
+            raise ValueError("Slot 1 (index 0, Luso) is not recruited; cannot inject into malformed roster")
+        if recruited_indices != list(range(len(recruited_indices))):
+            raise ValueError(
+                f"Clan roster has a hole (recruited indices: {recruited_indices}); "
+                "refusing to inject into non-contiguous roster"
+            )
+        first_free = len(recruited_indices)
+
         if unit_index is not None:
             if not (0 <= unit_index < MAX_UNITS):
                 raise ValueError(f"Invalid unit index: {unit_index} (must be 0..{MAX_UNITS - 1})")
+            if unit_index == 0:
+                raise ValueError("Cannot inject into Unit slot 1 (index 0): reserved for story leader Luso")
+            target_unit = self.get_unit(unit_index)
+            assert target_unit is not None
+            if target_unit.is_recruited:
+                if not force:
+                    raise ValueError(
+                        f"Unit slot {unit_index + 1} is already occupied by {self.get_unit_name(unit_index)}; "
+                        "pass force=True (--force) to overwrite"
+                    )
+            elif unit_index != first_free:
+                raise ValueError(
+                    f"Cannot inject into Unit slot {unit_index + 1} because earlier slot {first_free + 1} is empty "
+                    "(roster must remain contiguous)"
+                )
             target_idx = unit_index
         else:
-            free_idx = None
-            for i in range(MAX_UNITS):
-                u = self.get_unit(i)
-                if u is not None and not u.is_recruited:
-                    free_idx = i
-                    break
-            if free_idx is None:
+            if first_free >= MAX_UNITS:
                 raise ValueError(f"Clan roster is full ({MAX_UNITS}/{MAX_UNITS} units recruited)")
-            target_idx = free_idx
+            target_idx = first_free
 
         build = resolve_build(str(spec)) if isinstance(spec, str) else None
         if build is not None:
@@ -631,28 +688,57 @@ class FFTA2Save:
         unit = self.get_unit(target_idx)
         assert unit is not None
 
-        # Clear the 0x11C-byte unit struct before populating
-        unit._data[:] = b"\x00" * UNIT_STRIDE
-        unit.character_id = 1 if target_idx == 0 else 0
-        unit.race_id = race_id
+        # Clone an existing recruited non-Luso unit of the same race (falling back to any recruited non-Luso unit)
+        template_bytes: bytes | None = None
+        for cand in self.units[1:]:
+            if cand.is_recruited and cand.index != target_idx and cand.race_id == race_id:
+                template_bytes = bytes(cand._data)
+                break
+        if template_bytes is None:
+            for cand in self.units[1:]:
+                if cand.is_recruited and cand.index != target_idx:
+                    template_bytes = bytes(cand._data)
+                    break
+        if template_bytes is None:
+            template_bytes = bytes(self.units[0]._data)
+
+        unit._data[:] = template_bytes
+
+        # Documented field overrides on the cloned 0x11C unit struct (ARM9 0x020B9368 / 0x020BA92C):
+        # 1. +0x00..0x0C: 13-byte alignment/header prefix (always 0x00 on all units)
+        unit._data[0x00:0x0D] = b"\x00" * 13
+        # 2. +0x0D character_id: 0 for generic clan recruits (1 is reserved for Luso)
+        unit.character_id = 0
+        # 3. +0x0E job_id, +0x18..0x19 job_msg_id (0x03E8 + job), +0x1A..0x1B job_str_id (0x9470 + job)
         unit.job_id = job_id
+        # 4. +0x0F race_id: matches get_job_race_id(job_id)
+        unit.race_id = race_id
+        # 5. +0x10 reserved byte: always 0
+        unit._data[0x10] = 0
+        # 6. +0x11 roster_index: 1-based contiguous roster index (slot + 1, ARM9 0x020BA748)
         unit.roster_index = target_idx + 1
+        # 7. +0x12..0x13 status_flags: 0x0080 (active recruited clan member, not deployed)
         unit.status_flags = 0x0080
+        # 8. +0x1C..0x21 runtime party/dispatch state: 0 on fresh recruits
+        unit._data[0x1C:0x22] = b"\x00" * 6
+        # 9. +0x22 level (1..99) and +0x23 exp (0)
+        unit.level = clamped_level
+        unit.exp = 0
+        # 10. +0x25..0x2D base job flags (9 bytes of 0x01, ARM9 0x020B9540..0x020B95BC)
         unit._data[OFF_UNIT_BASE_FLAGS_START:OFF_UNIT_BASE_FLAGS_END] = b"\x01" * (
             OFF_UNIT_BASE_FLAGS_END - OFF_UNIT_BASE_FLAGS_START
         )
-        unit.level = clamped_level
-        unit.exp = 0
+        # 11. +0x2E..0x3B learned/runtime status buffer: cleared to 0x00 (fresh recruit state)
+        unit._data[OFF_UNIT_BASE_FLAGS_END:OFF_UNIT_CUR_HP] = b"\x00" * (OFF_UNIT_CUR_HP - OFF_UNIT_BASE_FLAGS_END)
 
-        if target_idx == 0:
-            unit.name_id = 0x8001
-            if name is not None:
-                self.rename_unit(0, name)
-        elif name is not None:
-            unit.name_id = resolve_character_name_id(name, race_id=race_id)
+        # 12. +0x14..0x15 name_id: race-specific generic pool ID (avoiding existing clan names by default)
+        used_ids = {u.name_id for u in self.units if u.is_recruited and u.index != target_idx and u.index > 0}
+        if name is not None:
+            unit.name_id = resolve_character_name_id(name, race_id=race_id, allow_any_pool=force)
         else:
-            unit.name_id = get_default_name_id_for_race(race_id, slot_index=target_idx)
+            unit.name_id = get_default_name_id_for_race(race_id, slot_index=target_idx, used_name_ids=used_ids)
 
+        # 13. +0x16..0x17 ability sets, +0x4C..0x55 equipment, +0x56..0x59 R/P abilities:
         if build is not None:
             unit.primary_ability_set = int(build["primary_set"])
             unit.secondary_ability_set = int(build["secondary_set"])
@@ -661,28 +747,40 @@ class FFTA2Save:
             unit.helm_id = int(build["helm_id"])
             unit.armor_id = int(build["armor_id"])
             unit.accessory_id = int(build["accessory_id"])
-            if build.get("r_ability"):
-                unit.r_ability = int(build["r_ability"])
-            if build.get("p_ability"):
-                unit.p_ability = int(build["p_ability"])
+            unit.r_ability = int(build.get("r_ability", 0) or 0)
+            unit.p_ability = int(build.get("p_ability", 0) or 0)
         else:
             unit.primary_ability_set = JOB_PRIMARY_A_SETS.get(job_id, 1)
             unit.secondary_ability_set = 0
+            unit.weapon_id = 0
+            unit.shield_id = 0
+            unit.helm_id = 0
+            unit.armor_id = 0
+            unit.accessory_id = 0
+            unit.r_ability = 0
+            unit.p_ability = 0
 
+        # 14. +0x24 speed and +0x3C..0x4B stats (cur_hp=max_hp=god['hp'], cur_mp=0, max_mp=god['mp'])
         god = compute_god_stats(job_id, clamped_level)
-        unit.max_hp = god["hp"]
         unit.cur_hp = god["hp"]
+        unit.max_hp = god["hp"]
+        unit.cur_mp = 0
         unit.max_mp = god["mp"]
-        unit.cur_mp = god["mp"]
         unit.speed = god["speed"]
         unit.attack = god["watk"]
         unit.defense = god["wdef"]
         unit.matk = god["mpow"]
         unit.mdef = god["mres"]
 
+        # 15. +0x5A..0x11B ability AP / mastery array: cleared to 0x00 (or 0xFF if master_abilities=True)
         if master_abilities:
             unit.master_all_abilities()
+        else:
+            unit._data[OFF_UNIT_ABILITIES_START:OFF_UNIT_ABILITIES_END] = b"\x00" * (
+                OFF_UNIT_ABILITIES_END - OFF_UNIT_ABILITIES_START
+            )
 
+        self._warn_duplicate_unit_name(target_idx, self.get_unit_name(target_idx))
         self.sync_equipped_to_inventory()
         return (target_idx, unit)
 

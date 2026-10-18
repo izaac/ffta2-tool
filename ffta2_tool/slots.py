@@ -224,9 +224,11 @@ class SlotManager:
         play time (+0x28..+0x2B) keep their game-written values.
         """
         name_off = 0x01EC - 0x01C0
-        u0_name_raw = bytes(payload[name_off : name_off + 16])
+        u0_name_raw = bytes(payload[name_off : name_off + 20])
+        if 0 in u0_name_raw:
+            u0_name_raw = u0_name_raw[: u0_name_raw.index(0)]
         struct.pack_into("<I", self.raw, off + 8, _count_units(payload))
-        self.raw[off + 16 : off + 36] = (u0_name_raw + b"\x00" * 20)[:20]
+        self.raw[off + 16 : off + 36] = (u0_name_raw[:19] + b"\x00" * 20)[:20]
         self.raw[off + ENTRY_OFF_BADGE] = 1 if payload[PAYLOAD_OFF_DIFFICULTY] == 1 else 0
 
     # -- public API -------------------------------------------------------------

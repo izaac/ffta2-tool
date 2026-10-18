@@ -804,63 +804,111 @@ def get_character_name(name_id: int) -> str:
     return f"Name_0x{idx:04X}"
 
 
-def get_default_name_id_for_race(race_id: int, slot_index: int = 0) -> int:
-    """Returns a deterministic ROM name ID from the race's generic name pool (ARM9 0x020B92FC)."""
+def get_race_name_pool(race_id: int) -> range:
+    """Return the ROM generic recruit name ID range for `race_id` (ARM9 0x020B92FC)."""
     if race_id in (4, 6):  # Viera, Gria (Female pool 281..429)
-        pool = NAME_GROUP_FEMALE
-    elif race_id == 7:  # Seeq (Pool 445..648)
-        pool = NAME_GROUP_MONSTER
-    else:  # Hume, Bangaa, Nu Mou, Moogle (Male pool 68..265)
-        pool = NAME_GROUP_MALE
-    return pool[(slot_index * 17) % len(pool)]
+        return NAME_GROUP_FEMALE
+    if race_id == 7:  # Seeq (Monster/Seeq pool 445..648)
+        return NAME_GROUP_MONSTER
+    # Hume (1), Bangaa (2), Nu Mou (3), Moogle (5) (Male pool 68..265)
+    return NAME_GROUP_MALE
 
 
-def resolve_character_name_id(name_or_id: str | int, race_id: int = 1) -> int:
-    """Resolves a ROM character name string, numeric ID, or 'random' into a valid name_id (1..778)."""
+def _validate_resolved_id(idx: int, race_id: int, allow_any_pool: bool) -> int:
+    if (idx & 0x8000) != 0:
+        raise ValueError(f"Character name ID 0x{idx:04X} has high bit 0x8000 set (must be plain ROM ID 1..778)")
+    if not (1 <= idx < len(CHARACTER_NAMES)):
+        raise ValueError(f"Character name ID {idx} out of range (must be 1..{len(CHARACTER_NAMES) - 1})")
+    if allow_any_pool:
+        return idx
+
+    pool = get_race_name_pool(race_id)
+    if idx not in pool:
+        name_str = CHARACTER_NAMES[idx]
+        if idx not in NAME_GROUP_MALE and idx not in NAME_GROUP_FEMALE and idx not in NAME_GROUP_MONSTER:
+            raise ValueError(
+                f"Character name '{name_str}' (ID {idx}) is a story/special name and not in the generic recruit "
+                f"pool ({pool.start}..{pool.stop - 1}); pass force=True (--force) to allow"
+            )
+        raise ValueError(
+            f"Character name '{name_str}' (ID {idx}) belongs to a different race's name pool "
+            f"(expected {pool.start}..{pool.stop - 1} for race {race_id}); pass force=True (--force) to allow"
+        )
+    return idx
+
+
+def get_default_name_id_for_race(
+    race_id: int,
+    slot_index: int = 0,
+    used_name_ids: set[int] | None = None,
+) -> int:
+    """Returns a deterministic ROM name ID from the race's generic name pool (ARM9 0x020B92FC / 0x020B96C8)."""
+    pool = get_race_name_pool(race_id)
+    start = (slot_index * 17) % len(pool)
+    used = used_name_ids or set()
+    for step in range(len(pool)):
+        candidate = pool[(start + step) % len(pool)]
+        if candidate not in used:
+            return candidate
+    return pool[start]
+
+
+def resolve_character_name_id(
+    name_or_id: str | int,
+    race_id: int = 1,
+    allow_any_pool: bool = False,
+) -> int:
+    """Resolves a ROM character name string, numeric ID, or 'random' into a valid name_id (1..778).
+
+    By default (`allow_any_pool=False`), only IDs from the generic name pool matching
+    `race_id` are accepted; story/special names and wrong-race pool names raise ValueError.
+    """
     if isinstance(name_or_id, int):
-        idx = name_or_id & 0x7FFF
-        if 1 <= idx < len(CHARACTER_NAMES):
-            return name_or_id
-        raise ValueError(f"Character name ID {name_or_id} out of range (must be 1..{len(CHARACTER_NAMES) - 1})")
+        return _validate_resolved_id(name_or_id, race_id, allow_any_pool)
 
     clean = str(name_or_id).strip()
     if not clean:
         raise ValueError("Character name cannot be empty")
 
+    pool = get_race_name_pool(race_id)
     if clean.lower() == "random":
-        if race_id in (4, 6):
-            return random.choice(list(NAME_GROUP_FEMALE))
-        if race_id == 7:
-            return random.choice(list(NAME_GROUP_MONSTER))
-        return random.choice(list(NAME_GROUP_MALE))
+        return random.choice(list(pool))
 
     try:
         val = int(clean, 0)
-        idx = val & 0x7FFF
-        if 1 <= idx < len(CHARACTER_NAMES):
-            return val
-        raise ValueError(f"Character name ID {val} out of range (must be 1..{len(CHARACTER_NAMES) - 1})")
-    except ValueError as err:
-        if "out of range" in str(err):
-            raise
+    except ValueError:
+        val = None
+
+    if val is not None:
+        return _validate_resolved_id(val, race_id, allow_any_pool)
 
     lower = clean.lower()
-    for idx in range(1, len(CHARACTER_NAMES)):
+    # Exact match: check race pool first so duplicate strings (if any) prefer the legal pool
+    for idx in pool:
         if CHARACTER_NAMES[idx].lower() == lower:
             return idx
+    for idx in range(1, len(CHARACTER_NAMES)):
+        if CHARACTER_NAMES[idx].lower() == lower:
+            return _validate_resolved_id(idx, race_id, allow_any_pool)
 
-    prefix_matches = [
+    # Prefix match: check race pool first when allow_any_pool is False
+    pool_prefixes = [(idx, CHARACTER_NAMES[idx]) for idx in pool if CHARACTER_NAMES[idx].lower().startswith(lower)]
+    if len(pool_prefixes) == 1:
+        return pool_prefixes[0][0]
+
+    all_prefixes = [
         (idx, CHARACTER_NAMES[idx])
         for idx in range(1, len(CHARACTER_NAMES))
         if CHARACTER_NAMES[idx].lower().startswith(lower)
     ]
-    if len(prefix_matches) == 1:
-        return prefix_matches[0][0]
+    if len(all_prefixes) == 1:
+        return _validate_resolved_id(all_prefixes[0][0], race_id, allow_any_pool)
 
-    suggestions = [name for _, name in prefix_matches[:5]]
+    suggestions = [name for _, name in (pool_prefixes or all_prefixes)[:5]]
     hint = f" Closest matches: {', '.join(suggestions)}." if suggestions else ""
     raise ValueError(
         f"Unknown FFTA2 ROM character name '{clean}' (not in ROM character name table). "
-        f"Generic/roster units (slots 2..24) store a ROM name table ID (1..{len(CHARACTER_NAMES) - 1}) "
+        f"Generic/roster units (slots 2..24) store a ROM name table ID "
+        f"({pool.start}..{pool.stop - 1} for race {race_id}) "
         f"or 'random' (only Unit 1 / Luso stores a freeform custom string).{hint}"
     )
