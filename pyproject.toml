@@ -9,7 +9,7 @@ description = "Final Fantasy Tactics A2 (NDS) Save Editor and Reverse Engineerin
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "Jorge Izaac", email = "izaac@linux.com" }]
+authors = [{ name = "Izaac Zavaleta", email = "izaac@linux.com" }]
 dependencies = []
 
 [project.scripts]
