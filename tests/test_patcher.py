@@ -425,6 +425,87 @@ def test_difficulty_roundtrip():
 EXAMPLE_SAVE = Path(__file__).resolve().parent.parent / "examples" / "FFTA2_Meta_Squad_Hard.sav"
 
 
+def test_layout_offset_parity():
+    """Buffer and payload coordinates are two views of one byte; every pair must agree."""
+    from ffta2_tool import crypto, layout, save, slots
+
+    assert layout.RECORD_STAGING_OFFSET == 0x01B8
+    assert layout.RECORD_HEADER_SIZE == 0x08
+    assert layout.PAYLOAD_START == layout.RECORD_STAGING_OFFSET + layout.RECORD_HEADER_SIZE == 0x01C0
+    assert layout.PAYLOAD_START + layout.PAYLOAD_SIZE == 0x35C0
+
+    for name, buffer_off, payload_off in layout.FIELD_OFFSET_PAIRS:
+        assert buffer_off - payload_off == layout.PAYLOAD_START, f"{name}: buffer/payload pair drift"
+        assert layout.buffer_to_payload_offset(buffer_off) == payload_off, name
+        assert layout.payload_to_buffer_offset(payload_off) == buffer_off, name
+
+    # Modules must derive their constants from the canonical pairs, not own copies.
+    assert crypto.RECORD_HEADER_OFFSET == layout.RECORD_STAGING_OFFSET
+    assert crypto.ENCRYPTED_START == layout.PAYLOAD_START
+    assert crypto.ENCRYPTED_SIZE == layout.PAYLOAD_SIZE
+    assert slots.RECORD_BASE == layout.RECORD_STAGING_OFFSET
+    assert slots.RECORD_HEADER_SIZE == layout.RECORD_HEADER_SIZE
+    assert slots.SLOT_PAYLOAD_SIZE == layout.PAYLOAD_SIZE
+    aliases = {
+        "OFF_CLAN_NAME": layout.BUFFER_OFF_CLAN_NAME,
+        "OFF_LEADER_NAME": layout.BUFFER_OFF_LEADER_NAME,
+        "UNIT_TABLE_BASE": layout.BUFFER_OFF_UNIT_TABLE,
+        "INVENTORY_BASE": layout.BUFFER_OFF_INVENTORY,
+        "OFF_GIL": layout.BUFFER_OFF_GIL,
+        "OFF_CLAN_POINTS": layout.BUFFER_OFF_CLAN_POINTS,
+        "OFF_CLAN_TALENTS": layout.BUFFER_OFF_CLAN_TALENTS,
+        "OFF_CLAN_PRIVILEGES_START": layout.BUFFER_OFF_CLAN_PRIVILEGES,
+        "OFF_DIFFICULTY": layout.BUFFER_OFF_DIFFICULTY,
+    }
+    for attr, want in aliases.items():
+        assert getattr(save, attr) == want, f"save.{attr} lost its layout alias"
+    print("[PASS] Buffer/payload offset pairs agree with PAYLOAD_START 0x01C0.")
+
+
+def test_difficulty_helpers():
+    """The stored 0/1 byte and the API 1/2 convention convert and validate correctly."""
+    from ffta2_tool.layout import (
+        BUFFER_OFF_DIFFICULTY,
+        DIFFICULTY_API_HARD,
+        DIFFICULTY_API_NORMAL,
+        DIFFICULTY_RAW_HARD,
+        DIFFICULTY_RAW_NORMAL,
+        api_to_raw_difficulty,
+        raw_to_api_difficulty,
+    )
+
+    assert (DIFFICULTY_RAW_NORMAL, DIFFICULTY_RAW_HARD) == (0, 1)
+    assert (DIFFICULTY_API_HARD, DIFFICULTY_API_NORMAL) == (1, 2)
+    assert raw_to_api_difficulty(0) == DIFFICULTY_API_NORMAL
+    assert raw_to_api_difficulty(1) == DIFFICULTY_API_HARD
+    assert raw_to_api_difficulty(2) == DIFFICULTY_API_NORMAL  # anything but 1 plays as Normal
+    assert api_to_raw_difficulty(1) == DIFFICULTY_RAW_HARD
+    assert api_to_raw_difficulty(2) == DIFFICULTY_RAW_NORMAL
+    assert api_to_raw_difficulty(0) == DIFFICULTY_RAW_NORMAL  # 0 is a Normal alias
+
+    for bad in (3, -1, 4, 255, True, False, "1"):
+        try:
+            api_to_raw_difficulty(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"api_to_raw_difficulty accepted invalid value {bad}")
+
+    save = FFTA2Save(EXAMPLE_SAVE)
+    for value, raw in ((1, 1), (2, 0), (0, 0)):
+        save.difficulty = value
+        assert save.plaintext[BUFFER_OFF_DIFFICULTY] == raw, f"difficulty={value} wrote {raw}"
+        assert save.difficulty == (1 if raw == 1 else 2)
+    for bad in (3, -1):
+        try:
+            save.difficulty = bad
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"difficulty setter accepted invalid value {bad}")
+    assert save.plaintext[BUFFER_OFF_DIFFICULTY] == 0, "a rejected difficulty must not be written"
+    print("[PASS] Difficulty raw/API helpers and setter validation verified.")
+
+
 def _set_entry_state(raw: bytearray, copy_base: int, pos: int, active: int, retired: int, slot_id: int) -> None:
     from ffta2_tool.slots import entry_offset
 
@@ -466,6 +547,7 @@ def test_slot_record_mapping():
     """
     import struct
 
+    from ffta2_tool.layout import PAYLOAD_OFF_DIFFICULTY
     from ffta2_tool.slots import (
         ENTRY_SIZE,
         RECORD_OFFSETS,
@@ -530,7 +612,9 @@ def test_slot_record_mapping():
         assert out_sm.slot_position(1 - slot) == in_sm.slot_position(1 - slot), f"{name}: other slot changed"
         assert out_sm.verify_slot(slot)[0], f"{name}: record checksum invalid"
         _, _, payload = out_sm.get_slot_payload(slot)
-        assert payload[0x2798] == (1 if want == 1 else 0), f"{name}: difficulty not in the loaded record"
+        assert payload[PAYLOAD_OFF_DIFFICULTY] == (1 if want == 1 else 0), (
+            f"{name}: difficulty not in the loaded record"
+        )
         assert out[entry_offset(act, pos) + 0x24] == (1 if want == 1 else 0), f"{name}: badge not updated"
         assert struct.unpack_from("<I", out, act)[0] == calculate_metadata_checksum(out[act : act + 0xDC])
         preview = out_sm.get_slot_preview(slot)
@@ -1248,6 +1332,8 @@ if __name__ == "__main__":
     test_quicksave_deactivation()
     test_validator_guards()
     test_difficulty_roundtrip()
+    test_layout_offset_parity()
+    test_difficulty_helpers()
     test_slot_record_mapping()
     test_clan_perks()
     test_rename_unit_and_clan()

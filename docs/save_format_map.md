@@ -2,9 +2,10 @@
 
 One page that collects every verified address in one place, with the formulas that
 connect them. Sources: ARM9/overlay disassembly, melonDS RAM pokes and cross-checks
-against real saves (2026-10-16/17). Tool constants live in
-`ffta2_tool/save.py` (payload offsets) and `ffta2_tool/slots.py` (container). Numbers
-marked UNVERIFIED are best-guesses, do not rely on them.
+against real saves (2026-10-16/17). Tool constants live in `ffta2_tool/layout.py`
+(canonical buffer/payload offsets), `ffta2_tool/save.py` (buffer offset aliases) and
+`ffta2_tool/slots.py` (container). Numbers marked UNVERIFIED are best-guesses, do not
+rely on them.
 
 ## 1. The four layers and how to translate between them
 
@@ -57,12 +58,18 @@ badge byte +0x24 bit 0 = Hard.
 | 0x01EC | 20 | leader ("Luso") custom name. Game RAM 0x020FA380 |
 | 0x0238 + i*0x11C | 0x11C | unit i, i in 0..23 (24 = full clan) |
 | 0x1DFC | array | clan inventory: per item_id total/equipped counts |
-| 0x2798 | 1 | difficulty: 1 = Hard, 2 = Normal (RAM 0x0212D878) |
+| 0x2958 | 1 | difficulty byte (whole-buffer offset; payload offset 0x2798): 0 = Normal, 1 = Hard |
 | 0x281C | u32 | gil (RAM 0x0212D6FC, cap literal 99999999 in the code) |
 | 0x2820 | u16 | clan points, cap 9999 (RAM 0x0212D700) |
 | 0x2824 | 4 | talents Negotiation/Aptitude/Teamwork/Adaptability, cap 99 (RAM 0x0212D704) |
 | 0x2937 | 9 | clan privilege bitfield (see §6, RAM 0x0212D817) |
-| 0x2958 | 1 | difficulty copy used by the save validator (save_architecture.md §8) |
+
+> Difficulty is one byte, addressed in two coordinate systems: `0x2798` is its payload
+> offset and `0x2958` its offset in the whole-buffer record window (`0x01C0 + 0x2798`,
+> see `ffta2_tool/layout.py`). They are the same byte, not two copies, so writing either
+> one writes both. Only the load-screen preview badge (metadata entry `+0x24`) is a
+> separate byte. On disk the byte is 0/1; `FFTA2Save.difficulty` and the slot previews
+> expose the tool API convention 1 = Hard, 2 = Normal (0 accepted as Normal on write).
 
 Unit fields (all offsets relative to unit base; UNIT_TABLE_BASE = 0x0238):
 
@@ -163,7 +170,7 @@ names in sysdata/JD_message_0.pak file 15), one entry per flag bit 0x071C..0x075
 | 0x020B9368 | unit struct populate; 0x020B9158 level_up_unit (stat growth loop) |
 | 0x020BAA4C | dismiss unit; 0x020F1554 clan inventory equipped-count update |
 | 0x0212D6FC..0x0212D704 | gil/CP/talents RAM (plaintext 0x281C/0x2820/0x2824) |
-| 0x0212D787/0x0212D788 | difficulty byte in RAM (plaintext 0x2798/0x2958 copies) |
+| 0x0212D787/0x0212D788 | difficulty byte in RAM (save payload 0x2798 / whole-buffer 0x2958; the RAM address here is UNVERIFIED) |
 | 0x0212D817..0x0212D81F | privilege bitfield RAM |
 
 ## 8. Invariants the tool checks before writing (validator.py)

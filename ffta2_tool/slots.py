@@ -23,12 +23,22 @@ from typing import Any
 
 from ffta2_tool.charset import decode_ffta2_string
 from ffta2_tool.crypto import calculate_checksum
+from ffta2_tool.layout import (
+    DIFFICULTY_RAW_HARD,
+    PAYLOAD_OFF_DIFFICULTY,
+    PAYLOAD_OFF_LEADER_NAME,
+    PAYLOAD_OFF_UNIT_TABLE,
+    PAYLOAD_SIZE,
+    RECORD_HEADER_SIZE,
+    RECORD_STAGING_OFFSET,
+    api_to_raw_difficulty,
+    raw_to_api_difficulty,
+)
 
 # Constants
-SLOT_PAYLOAD_SIZE = 0x3400
-RECORD_HEADER_SIZE = 8
+SLOT_PAYLOAD_SIZE = PAYLOAD_SIZE  # 0x3400
 SLOT_RECORD_SIZE = RECORD_HEADER_SIZE + SLOT_PAYLOAD_SIZE  # 0x3408
-RECORD_BASE = 0x01B8
+RECORD_BASE = RECORD_STAGING_OFFSET  # 0x01B8
 ENTRY_COUNT = 4
 # Physical record base for each metadata entry position 0..3
 RECORD_OFFSETS = [RECORD_BASE + pos * SLOT_RECORD_SIZE for pos in range(ENTRY_COUNT)]
@@ -48,12 +58,8 @@ QUICKSAVE_SLOT_ID = 2
 
 BANK_SIZE = 0x40000  # 256 KB
 
-# ARM9 difficulty byte in decrypted payload (0x0210D7A8 / 0x020D0C58 / 0x020D0C80)
-# 1 = Hard, 0 = Normal
-PAYLOAD_OFF_DIFFICULTY = 0x2798
 
-
-def compute_lcg_keystream(seed: int, length: int = 0x3400) -> bytes:
+def compute_lcg_keystream(seed: int, length: int = PAYLOAD_SIZE) -> bytes:
     """Generate keystream bytes using the reverse-engineered 8-bit LCG.
 
     ARM9 routine (0x0210CF84):
@@ -136,7 +142,7 @@ def find_free_entry(raw: bytes | bytearray, copy_base: int) -> int | None:
 def _count_units(payload: bytes | bytearray) -> int:
     unit_count = 0
     for u in range(24):
-        u_base = 0x0238 - 0x01C0 + u * 0x11C
+        u_base = PAYLOAD_OFF_UNIT_TABLE + u * 0x11C
         if u_base + 0x0F < len(payload) and (payload[u_base + 0x0D] != 0 or payload[u_base + 0x0E] != 0):
             unit_count += 1
     return unit_count
@@ -223,13 +229,15 @@ class SlotManager:
         Quests (+0x0C), subflag (+0x25), clan title rank (+0x26), leader level (+0x27), and
         play time (+0x28..+0x2B) keep their game-written values.
         """
-        name_off = 0x01EC - 0x01C0
+        name_off = PAYLOAD_OFF_LEADER_NAME
         u0_name_raw = bytes(payload[name_off : name_off + 20])
         if 0 in u0_name_raw:
             u0_name_raw = u0_name_raw[: u0_name_raw.index(0)]
         struct.pack_into("<I", self.raw, off + 8, _count_units(payload))
         self.raw[off + 16 : off + 36] = (u0_name_raw[:19] + b"\x00" * 20)[:20]
-        self.raw[off + ENTRY_OFF_BADGE] = 1 if payload[PAYLOAD_OFF_DIFFICULTY] == 1 else 0
+        self.raw[off + ENTRY_OFF_BADGE] = (
+            DIFFICULTY_RAW_HARD if payload[PAYLOAD_OFF_DIFFICULTY] == DIFFICULTY_RAW_HARD else 0
+        )
 
     # -- public API -------------------------------------------------------------
 
@@ -297,11 +305,12 @@ class SlotManager:
         mins = entry[42]
         secs = entry[43]
 
-        # The game plays the difficulty stored in the decrypted payload at 0x2798
-        # (1 = Hard, 0 = Normal); the entry badge is display only and can disagree.
+        # The game plays the difficulty byte stored in the decrypted payload
+        # (payload 0x2798 / buffer 0x2958, 0 = Normal, 1 = Hard); the entry badge is
+        # display only and can disagree.
         _, _, payload = self._read_record(RECORD_OFFSETS[pos])
-        difficulty = 1 if payload[PAYLOAD_OFF_DIFFICULTY] == 1 else 2
-        badge_difficulty = 1 if diff_byte & 1 else 2
+        difficulty = raw_to_api_difficulty(payload[PAYLOAD_OFF_DIFFICULTY])
+        badge_difficulty = raw_to_api_difficulty(diff_byte & 1)
         return {
             "slot_index": slot_idx,
             "slot_label": f"Slot {slot_idx + 1}",
@@ -363,7 +372,7 @@ class SlotManager:
 
         payload = bytearray(plaintext_payload)
         if difficulty is not None:
-            payload[PAYLOAD_OFF_DIFFICULTY] = 1 if difficulty == 1 else 0
+            payload[PAYLOAD_OFF_DIFFICULTY] = api_to_raw_difficulty(difficulty)
 
         copy_base = self.active_copy_base()
         pos = find_live_entry(self.raw, copy_base, slot_idx)
@@ -412,10 +421,7 @@ class SlotManager:
     def set_slot_difficulty(self, slot_idx: int, difficulty: int) -> None:
         """Set difficulty for a slot (1 = Hard, 2/0 = Normal), updating payload and preview."""
         _check_slot(slot_idx)
-        if difficulty not in (0, 1, 2):
-            raise ValueError("difficulty must be 1 (Hard) or 2 (Normal)")
-
-        diff_byte = 1 if difficulty == 1 else 0
+        diff_byte = api_to_raw_difficulty(difficulty)
         base = self.record_offset(slot_idx)
         _, seed, payload = self._read_record(base)
         payload[PAYLOAD_OFF_DIFFICULTY] = diff_byte

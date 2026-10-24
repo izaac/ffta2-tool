@@ -10,6 +10,7 @@ import warnings
 from datetime import datetime
 from pathlib import Path
 
+from ffta2_tool import layout
 from ffta2_tool.charset import (
     CUSTOM_NAME_BUFFER_LEN,
     MAX_CUSTOM_NAME_CHARS,
@@ -26,6 +27,10 @@ from ffta2_tool.crypto import (
     encrypt_save_payload,
     extract_keystream,
 )
+from ffta2_tool.layout import (
+    api_to_raw_difficulty,
+    raw_to_api_difficulty,
+)
 from ffta2_tool.mappings import (
     JOB_PRIMARY_A_SETS,
     get_character_name,
@@ -34,13 +39,24 @@ from ffta2_tool.mappings import (
     resolve_job_spec,
 )
 
-# Custom Clan and Leader name buffers in the decrypted save payload (20 bytes each)
-# In-game Name Entry (OVL_12 0x02135FE8 & 0x02135FFC) caps both at 9 chars (MAX_CUSTOM_NAME_CHARS = 9).
-OFF_CLAN_NAME = 0x01D8  # payload + 0x18 (ARM9 0x020FA398)
-OFF_LEADER_NAME = 0x01EC  # payload + 0x2C (ARM9 0x020FA380)
+# Every OFF_* / *_BASE constant below is a BUFFER offset: an absolute offset into the
+# staged 0x3408-byte record window that starts at 0x01B8 (see ffta2_tool.layout).
+# The decrypted payload starts at 0x01C0, so buffer offset = payload offset + 0x01C0.
+# The values are aliases of the canonical pairs in layout.py; public names kept for callers.
+OFF_CLAN_NAME = layout.BUFFER_OFF_CLAN_NAME  # payload 0x0018, ARM9 0x020FA398
+OFF_LEADER_NAME = layout.BUFFER_OFF_LEADER_NAME  # payload 0x002C, ARM9 0x020FA380
+UNIT_TABLE_BASE = layout.BUFFER_OFF_UNIT_TABLE  # payload 0x0078
+INVENTORY_BASE = layout.BUFFER_OFF_INVENTORY  # payload 0x1C3C
+OFF_GIL = layout.BUFFER_OFF_GIL  # payload 0x265C
+OFF_CLAN_POINTS = layout.BUFFER_OFF_CLAN_POINTS  # payload 0x2660
+OFF_CLAN_TALENTS = layout.BUFFER_OFF_CLAN_TALENTS  # payload 0x2664
+OFF_CLAN_PRIVILEGES_START = layout.BUFFER_OFF_CLAN_PRIVILEGES  # payload 0x2777
+OFF_DIFFICULTY = layout.BUFFER_OFF_DIFFICULTY  # payload 0x2798
 
-# Party units in the decrypted save file
-UNIT_TABLE_BASE = 0x0238  # Unit 0 starts at 0x0238
+# Custom Clan and Leader name buffers in the staged record (20 bytes each)
+# In-game Name Entry (OVL_12 0x02135FE8 & 0x02135FFC) caps both at 9 chars (MAX_CUSTOM_NAME_CHARS = 9).
+
+# Party units in the staged record
 UNIT_STRIDE = 0x11C  # 284 bytes per unit slot
 MAX_UNITS = 24
 
@@ -81,21 +97,18 @@ OFF_UNIT_P_ABILITY = 0x58  # 16-bit (Passive / Support Ability)
 OFF_UNIT_ABILITIES_START = 0x5A  # Byte offset of ability AP array start (apIndex 0)
 OFF_UNIT_ABILITIES_END = 0x11C  # Byte offset of ability AP array end / unit boundary (apIndex 193)
 
-# Clan Inventory in decrypted save payload
-INVENTORY_BASE = 0x1DFC
+# Clan Inventory in the staged record (buffer 0x1DFC == payload 0x1C3C)
 MAX_INVENTORY_SLOTS = 400
 
-# Difficulty setting in the slot 0 payload (1 = Hard, 0 = Normal)
-# ARM9 routine (0x0210D7A8 / 0x020D0C58 / 0x020D0C80):
-# Relative offset in payload is 0x2798 (file offset 0x01C0 + 0x2798 = 0x2958)
-OFF_DIFFICULTY = 0x2958
+# Difficulty byte: buffer 0x2958 == payload 0x2798 (one byte, not two copies).
+# ARM9 routine (0x0210D7A8 / 0x020D0C58 / 0x020D0C80): 0 = Normal, 1 = Hard on disk.
+# The public property exposes 1 = Hard / 2 = Normal (see ffta2_tool.layout).
 
-# Clan Economy & Privileges in decrypted save payload
-# File offsets are 0x01C0 + payload offset
-OFF_GIL = 0x281C  # uint32, max 99,999,999 (RAM 0x0212D6FC)
-OFF_CLAN_POINTS = 0x2820  # uint16, max 9,999 (RAM 0x0212D700)
-OFF_CLAN_TALENTS = 0x2824  # 4 bytes: Negotiation, Aptitude, Teamwork, Adaptability (RAM 0x0212D704)
-OFF_CLAN_PRIVILEGES_START = 0x2937  # 9-byte Clan Privilege bitfield (RAM 0x0212D817)
+# Clan Economy & Privileges in the staged record (buffer = payload + 0x01C0)
+# Gil: buffer 0x281C / payload 0x265C, uint32, max 99,999,999 (RAM 0x0212D6FC)
+# Clan points: buffer 0x2820 / payload 0x2660, uint16, max 9,999 (RAM 0x0212D700)
+# Clan talents: buffer 0x2824 / payload 0x2664, 4 bytes: Negotiation, Aptitude, Teamwork, Adaptability
+# Clan privileges: buffer 0x2937 / payload 0x2777, 9-byte bitfield (RAM 0x0212D817)
 # Privilege bits within those 9 bytes (flags 0x071C..0x075B from sysdata.pak file 0x23 /
 # ARM9 0x0210695C..0x021069FC and JD_message_0.pak file 15):
 # - 0x2937 bits 0..3 (0x0718..0x071B) precede entry 1 of the privilege table.
@@ -535,15 +548,19 @@ class FFTA2Save:
 
     @property
     def difficulty(self) -> int:
-        """Return the loaded slot's difficulty (1 = Hard, 2 = Normal)."""
-        val = self.plaintext[OFF_DIFFICULTY]
-        return 1 if val == 1 else 2
+        """Return the loaded slot's difficulty in API convention (1 = Hard, 2 = Normal).
+
+        The single stored byte is at buffer offset 0x2958 (payload offset 0x2798) and
+        uses the game's raw values: 0 = Normal, 1 = Hard. The API keeps the tool's
+        historical convention (1 = Hard, 2 = Normal) so that "1" stays the truthy
+        Hard value; use ffta2_tool.layout for the conversion.
+        """
+        return raw_to_api_difficulty(self.plaintext[OFF_DIFFICULTY])
 
     @difficulty.setter
     def difficulty(self, value: int) -> None:
-        if value not in (0, 1, 2):
-            raise ValueError("difficulty must be 1 (Hard) or 2 (Normal)")
-        self.plaintext[OFF_DIFFICULTY] = 1 if value == 1 else 0
+        """Set difficulty with 1 = Hard, 2 = Normal (0 is accepted as an alias for Normal)."""
+        self.plaintext[OFF_DIFFICULTY] = api_to_raw_difficulty(value)
 
     def get_unit(self, index: int) -> Unit | None:
         if not (0 <= index < MAX_UNITS):

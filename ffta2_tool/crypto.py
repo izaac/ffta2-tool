@@ -9,14 +9,17 @@ from __future__ import annotations
 
 import struct
 
+from ffta2_tool.layout import PAYLOAD_SIZE, PAYLOAD_START, RECORD_STAGING_OFFSET
+
 # Standard offsets for FFTA2 NDS saves (512 KB EEPROM/Flash). They address record
 # position 0; a slot can live in any of the 4 record positions (see ffta2_tool.slots),
 # and FFTA2Save stages the slot's record into this window before using them.
-RECORD_HEADER_OFFSET = 0x01B8
-CHECKSUM_OFFSET = 0x01B8
+# The canonical values live in ffta2_tool.layout; these names are kept for callers.
+RECORD_HEADER_OFFSET = RECORD_STAGING_OFFSET  # 0x01B8
+CHECKSUM_OFFSET = RECORD_STAGING_OFFSET
 CHECKSUM_SIZE = 4
-ENCRYPTED_START = 0x01C0
-ENCRYPTED_SIZE = 0x3400
+ENCRYPTED_START = PAYLOAD_START  # 0x01C0
+ENCRYPTED_SIZE = PAYLOAD_SIZE  # 0x3400
 ENCRYPTED_END = ENCRYPTED_START + ENCRYPTED_SIZE  # 0x35C0
 KEY_SIZE = 256
 CHECKSUM_RANGE_COUNT = 0x3408  # Record header (0x01B8) through 0x35BF
