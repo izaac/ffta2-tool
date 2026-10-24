@@ -5,6 +5,8 @@ __pycache__/
 dist/
 build/
 .venv/
+.ruff_cache/
+.pytest_cache/
+*.bak_*
 *.local.md
 examples/melonds/output/
-

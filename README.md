@@ -54,9 +54,11 @@ Copy `config.example.toml` to `config.toml` (or `~/.config/ffta2-tool/config.tom
 
 Nix dev shell with every downstream tool preloaded (python3, ruff, shellcheck, just, melonDS, xdotool, Xvfb, gdb, ImageMagick):
 
-```console
-$ nix develop        # flakes, see flake.nix
-$ nix-shell          # non-flake fallback, see shell.nix
+```bash
+nix develop        # flakes, see flake.nix
+nix-shell          # non-flake fallback, see shell.nix
 ```
 
 Inside the shell run `just --list` (tests: `just test`, lint+format: `just check`).
+Tests run hermetically against the committed example save; set
+`FFTA2_TEST_SAVE=/path/to.sav` to point them at a different save.

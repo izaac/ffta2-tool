@@ -130,7 +130,7 @@ MELONDS_PID=$!
 
 export DISPLAY="${DISPLAY_NUM}"
 WID=""
-for i in {1..35}; do
+for _ in {1..35}; do
     WID=$("${XDOTOOL}" search --onlyvisible --name "melonDS" 2>/dev/null | head -1 || true)
     if [ -n "${WID}" ]; then
         break

@@ -18,6 +18,7 @@ ffta2-tool = "ffta2_tool.cli:main"
 [project.optional-dependencies]
 dev = [
     "pymarkdownlnt>=0.9.29",
+    "pytest>=7.0.0",
     "ruff>=0.8.0",
 ]
 
@@ -25,7 +26,11 @@ dev = [
 packages = ["ffta2_tool"]
 
 [tool.setuptools.package-data]
-ffta2_tool = ["data/*.toml"]
+ffta2_tool = ["data/*.toml", "py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
 
 [tool.ruff]
 line-length = 120

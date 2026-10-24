@@ -35,14 +35,29 @@ from ffta2_tool.save import (
 )
 from ffta2_tool.validator import SUPPORT_ABILITY_RACES, validate_save, validate_unit
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+EXAMPLE_SAVE = REPO_ROOT / "examples" / "FFTA2_Meta_Squad_Hard.sav"
+
 
 def get_sample_save_path() -> Path | None:
-    candidates = [
+    """Resolve the save exercised by the save-backed tests.
+
+    Order is deterministic and hermetic: an explicit FFTA2_TEST_SAVE override, then the
+    committed repo example (so CI and clean machines behave identically), then the
+    user's own backups as a last resort.
+    """
+    override = os.environ.get("FFTA2_TEST_SAVE")
+    if override:
+        override_path = Path(override).expanduser()
+        if not override_path.exists():
+            raise FileNotFoundError(f"FFTA2_TEST_SAVE points at a missing save: {override_path}")
+        return override_path
+    if EXAMPLE_SAVE.exists():
+        return EXAMPLE_SAVE
+    for p in (
         Path.home() / "Documents" / "FFTA2_Backups" / "071 Final Fantasy Tactics A2.sav.orig",
         Path.home() / "Documents" / "FFTA2_Backups" / "071 Final Fantasy Tactics A2.sav",
-        Path(__file__).resolve().parent.parent / "examples" / "FFTA2_Meta_Squad_Hard.sav",
-    ]
-    for p in candidates:
+    ):
         if p.exists():
             return p
     return None
@@ -421,9 +436,6 @@ def test_difficulty_roundtrip():
     finally:
         if tmp_path.exists():
             tmp_path.unlink()
-
-
-EXAMPLE_SAVE = Path(__file__).resolve().parent.parent / "examples" / "FFTA2_Meta_Squad_Hard.sav"
 
 
 def test_layout_offset_parity():

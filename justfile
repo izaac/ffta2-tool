@@ -11,50 +11,78 @@ install:
         python3 -m pip install -e . ; \
     fi
 
-# Run test suite
-test:
-    PYTHONPATH=. python3 tests/test_crypto.py
-    PYTHONPATH=. python3 tests/test_patcher.py
-    PYTHONPATH=. python3 tests/test_battle_bot.py
-    PYTHONPATH=. python3 tests/test_arm_tools.py
+# Run test suite (extra args go to pytest, e.g. `just test -k crypto -v`)
+test *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if uv run --quiet pytest --version >/dev/null 2>&1; then
+        exec uv run pytest {{args}}
+    elif command -v pytest >/dev/null 2>&1; then
+        exec pytest {{args}}
+    elif python3 -m pytest --version >/dev/null 2>&1; then
+        exec python3 -m pytest {{args}}
+    else
+        echo "[INFO] pytest unavailable, running the standalone script suites"
+        PYTHONPATH=. python3 tests/test_crypto.py
+        PYTHONPATH=. python3 tests/test_patcher.py
+        PYTHONPATH=. python3 tests/test_battle_bot.py
+        PYTHONPATH=. python3 tests/test_arm_tools.py
+    fi
 
 md_targets := "docs/*.md README.md"
-md_ignores := "MD013,MD024,MD026,MD033,MD036,MD041"
 
-# Lint and check codebase
-check: test pycheck (mdlint "scan")
+# Lint, format-check and test the codebase
+check: test pycheck pyfmt-check (mdlint "scan")
 
 # Format codebase
 fmt: pyfmt (mdlint "fix")
 
 [private]
 mdlint action:
-    @if command -v uvx >/dev/null 2>&1; then \
-        uvx pymarkdownlnt -d {{md_ignores}} {{action}} {{md_targets}} ; \
-    elif command -v pymarkdownlnt >/dev/null 2>&1; then \
-        pymarkdownlnt -d {{md_ignores}} {{action}} {{md_targets}} ; \
+    @if uv run --quiet pymarkdown version >/dev/null 2>&1; then \
+        uv run pymarkdown --config .pymarkdown.json {{action}} {{md_targets}} ; \
+    elif command -v pymarkdown >/dev/null 2>&1; then \
+        pymarkdown --config .pymarkdown.json {{action}} {{md_targets}} ; \
     elif python3 -m pymarkdownlnt version >/dev/null 2>&1; then \
-        python3 -m pymarkdownlnt -d {{md_ignores}} {{action}} {{md_targets}} ; \
+        python3 -m pymarkdownlnt --config .pymarkdown.json {{action}} {{md_targets}} ; \
+    else \
+        uvx pymarkdownlnt --config .pymarkdown.json {{action}} {{md_targets}} ; \
     fi
 
 [private]
 pycheck:
-    @if command -v uvx >/dev/null 2>&1; then \
-        uvx ruff check . ; \
+    @if uv run --quiet ruff --version >/dev/null 2>&1; then \
+        uv run ruff check . ; \
     elif command -v ruff >/dev/null 2>&1; then \
         ruff check . ; \
-    else \
+    elif python3 -m ruff --version >/dev/null 2>&1; then \
         python3 -m ruff check . ; \
+    else \
+        uvx ruff check . ; \
+    fi
+
+[private]
+pyfmt-check:
+    @if uv run --quiet ruff --version >/dev/null 2>&1; then \
+        uv run ruff format --check . ; \
+    elif command -v ruff >/dev/null 2>&1; then \
+        ruff format --check . ; \
+    elif python3 -m ruff --version >/dev/null 2>&1; then \
+        python3 -m ruff format --check . ; \
+    else \
+        uvx ruff format --check . ; \
     fi
 
 [private]
 pyfmt:
-    @if command -v uvx >/dev/null 2>&1; then \
-        uvx ruff format . && uvx ruff check --fix . ; \
+    @if uv run --quiet ruff --version >/dev/null 2>&1; then \
+        uv run ruff format . && uv run ruff check --fix . ; \
     elif command -v ruff >/dev/null 2>&1; then \
         ruff format . && ruff check --fix . ; \
-    else \
+    elif python3 -m ruff --version >/dev/null 2>&1; then \
         python3 -m ruff format . && python3 -m ruff check --fix . ; \
+    else \
+        uvx ruff format . && uvx ruff check --fix . ; \
     fi
 
 # Validate a save file (checks custom target, backup dir, or example save)

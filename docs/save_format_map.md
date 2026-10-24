@@ -9,7 +9,7 @@ rely on them.
 
 ## 1. The four layers and how to translate between them
 
-```
+```text
 SD/PC .sav file (512 KiB "image")
   └─ banks:        2 x 0x40000 (bank 1 = 0x00000, bank 2 = 0x40000, mirrored copies)
        └─ records: 0x1B8 + pos*0x3408, 4 positions per bank   (SLOT_RECORD_SIZE 0x3408)

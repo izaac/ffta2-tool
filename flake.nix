@@ -15,6 +15,19 @@
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in
     {
+      packages = forAllSystems (pkgs: {
+        default = pkgs.python3Packages.buildPythonApplication {
+          pname = "ffta2-tool";
+          version = "0.1.0";
+          pyproject = true;
+          src = pkgs.lib.cleanSource ./.;
+          build-system = [
+            pkgs.python3Packages.setuptools
+          ];
+          doCheck = false;
+        };
+      });
+
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           packages = with pkgs; [

@@ -50,17 +50,17 @@ $M seq "$S" "left:0.2:2 a:0.6:8"
 $M seq "$S" "b:0.4:2 up:0.2:2 a:0.6:8 a:0.6:5"
 
 # Skip cutscene & law screen
-for i in $(seq 1 30); do
+for _ in $(seq 1 30); do
     $M seq "$S" "a:0.2:0.8 b:0.2:0.8"
 done
-for i in $(seq 1 10); do
+for _ in $(seq 1 10); do
     $M seq "$S" "a:0.3:1"
 done
 
 # Place Acia
 $M seq "$S" "l:0.3:1.5 l:0.3:1.5 l:0.3:1.5 l:0.3:1.5"
 $M seq "$S" "a:0.5:2"
-for i in $(seq 1 8); do
+for _ in $(seq 1 8); do
     $M seq "$S" "a:0.3:1.5"
 done
 $M seq "$S" "a:0.5:2 a:0.5:2"
@@ -72,7 +72,7 @@ $M seq "$S" "x:0.6:3 up:0.3:1 a:0.6:4"
 $M seq "$S" "a:0.5:2 up:0.3:1 a:0.6:4"
 
 # Advance battle intro text
-for i in $(seq 1 15); do
+for _ in $(seq 1 15); do
     $M seq "$S" "a:0.3:1.5"
 done
 

@@ -19,7 +19,7 @@ $M seq "$S" "a:0.6:4"
 $M shot "$S" 20_after_enter
 
 # Advance dialogue / cutscene
-for i in $(seq 1 8); do
+for _ in $(seq 1 8); do
     $M seq "$S" "a:0.5:2 b:0.5:2"
 done
 $M shot "$S" 21_after_dialogue
