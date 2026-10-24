@@ -484,7 +484,11 @@ def cmd_set_weapon(args: argparse.Namespace) -> int:
 
 
 def cmd_rom_inspect(args: argparse.Namespace) -> int:
-    info = inspect_nds_rom(args.rom_file)
+    try:
+        info = inspect_nds_rom(args.rom_file)
+    except ValueError as e:
+        sys.stderr.write(f"Error inspecting ROM: {e}\n")
+        return 1
     print(f"=== NDS ROM: {args.rom_file} ===")
     for k, v in info.items():
         if isinstance(v, int):
@@ -495,11 +499,15 @@ def cmd_rom_inspect(args: argparse.Namespace) -> int:
 
 
 def cmd_rom_extract(args: argparse.Namespace) -> int:
-    out_arm9 = extract_arm9(args.rom_file, args.output)
-    print(f"Extracted ARM9 binary to: {out_arm9}")
-    if args.overlays_dir:
-        ovs = extract_overlays(args.rom_file, args.overlays_dir)
-        print(f"Extracted {len(ovs)} overlays to: {args.overlays_dir}")
+    try:
+        out_arm9 = extract_arm9(args.rom_file, args.output)
+        print(f"Extracted ARM9 binary to: {out_arm9}")
+        if args.overlays_dir:
+            ovs = extract_overlays(args.rom_file, args.overlays_dir)
+            print(f"Extracted {len(ovs)} overlays to: {args.overlays_dir}")
+    except ValueError as e:
+        sys.stderr.write(f"Error extracting ROM: {e}\n")
+        return 1
     return 0
 
 

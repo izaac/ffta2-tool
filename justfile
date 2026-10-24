@@ -16,6 +16,7 @@ test:
     PYTHONPATH=. python3 tests/test_crypto.py
     PYTHONPATH=. python3 tests/test_patcher.py
     PYTHONPATH=. python3 tests/test_battle_bot.py
+    PYTHONPATH=. python3 tests/test_arm_tools.py
 
 md_targets := "docs/*.md README.md"
 md_ignores := "MD013,MD024,MD026,MD033,MD036,MD041"

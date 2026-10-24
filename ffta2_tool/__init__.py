@@ -1,6 +1,6 @@
 """FFTA2 Save and ARM Reverse Engineering Toolkit."""
 
-from ffta2_tool.arm_tools import extract_arm9, extract_overlays, inspect_nds_rom
+from ffta2_tool.arm_tools import extract_arm9, extract_overlays, inspect_nds_rom, inspect_overlays
 from ffta2_tool.crypto import (
     apply_keystream,
     calculate_checksum,
@@ -24,6 +24,7 @@ __all__ = [
     "FFTA2Save",
     "Unit",
     "inspect_nds_rom",
+    "inspect_overlays",
     "extract_arm9",
     "extract_overlays",
 ]
