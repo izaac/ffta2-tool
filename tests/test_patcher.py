@@ -24,6 +24,7 @@ from ffta2_tool.patcher import (
     apply_meta_squad,
 )
 from ffta2_tool.save import (
+    MAX_UNITS,
     MIN_SAVE_SIZE,
     OFF_UNIT_ABILITIES_END,
     OFF_UNIT_ABILITIES_START,
@@ -1219,6 +1220,102 @@ def test_inject_unit():
     print("[PASS] Recruit injection verified for contiguity, slot guards, template overrides, and slot isolation.")
 
 
+def test_unit_setter_bounds_validation():
+    """Unit setters must reject invalid input instead of silently masking (wrapping) it."""
+    with tempfile.NamedTemporaryFile(suffix=".sav", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+        tmp_path.write_bytes(_two_slot_example())
+    try:
+        save = FFTA2Save(tmp_path, slot=0)
+        u0 = save.get_unit(0)
+        assert u0 is not None
+
+        def expect_raise(exc_type, field, value):
+            try:
+                setattr(u0, field, value)
+            except exc_type:
+                return
+            except Exception as exc:
+                raise AssertionError(
+                    f"{field}={value!r} raised {type(exc).__name__}, expected {exc_type.__name__}"
+                ) from exc
+            raise AssertionError(f"{field}={value!r} was silently accepted")
+
+        # 1. level is a real 1..99 field, not a masked byte
+        original_level = u0.level
+        for bad_level in (0, 100, -1, 255):
+            expect_raise(ValueError, "level", bad_level)
+        for bad_bool in (True, False):
+            expect_raise(TypeError, "level", bad_bool)
+        assert u0.level == original_level
+
+        # 2. roster_index is 1..24
+        for bad_roster in (0, MAX_UNITS + 1):
+            expect_raise(ValueError, "roster_index", bad_roster)
+
+        # 3. u16 stats cannot go negative or wrap
+        for field in ("attack", "defense"):
+            expect_raise(ValueError, field, -1)
+        expect_raise(ValueError, "defense", -10)
+        expect_raise(ValueError, "weapon_id", 0x10000)
+        expect_raise(ValueError, "max_hp", 70000)
+
+        # 4. u8 fields cannot exceed 0xFF or be negative
+        expect_raise(ValueError, "job_id", 256)
+        expect_raise(ValueError, "job_id", -1)
+        expect_raise(ValueError, "race_id", -1)
+        expect_raise(ValueError, "speed", 300)
+
+        # 5. Type errors on non-integer types
+        for field, bad_val in (("attack", True), ("job_id", "archer"), ("speed", 5.5)):
+            expect_raise(TypeError, field, bad_val)
+
+        # 6. Inventory and ability byte validation
+        try:
+            save.set_inventory_item(-1, 5)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("set_inventory_item(-1, 5) did not raise ValueError")
+
+        try:
+            save.set_inventory_item(0x10000, 5)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("set_inventory_item(0x10000, 5) did not raise ValueError")
+
+        try:
+            u0.unlock_ability_byte(0x5A, 256)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("unlock_ability_byte(0x5A, 256) did not raise ValueError")
+
+        try:
+            u0.unlock_ability_byte(0, 0x80)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("unlock_ability_byte(0, 0x80) did not raise ValueError")
+
+        # 7. Valid boundaries still write through unchanged
+        u0.level = 1
+        assert u0.level == 1
+        u0.level = 99
+        assert u0.level == 99
+        u0.attack = 0
+        assert u0.attack == 0
+        u0.attack = 65535
+        assert u0.attack == 65535
+        u0.weapon_id = 0x0074
+        assert u0.weapon_id == 0x0074
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+    print("[PASS] Unit setter bounds validation verified (no silent masking).")
+
+
 def test_equip_unit_build():
     """Verify equipping a build from builds.toml onto a single unit."""
     from ffta2_tool.patcher import equip_unit_build
@@ -1338,6 +1435,7 @@ if __name__ == "__main__":
     test_clan_perks()
     test_rename_unit_and_clan()
     test_inject_unit()
+    test_unit_setter_bounds_validation()
     test_equip_unit_build()
     test_cli_new_commands()
     test_operations_idempotent()

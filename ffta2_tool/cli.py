@@ -210,7 +210,9 @@ def cmd_equip_build(args: argparse.Namespace) -> int:
         topup_stats=not args.no_god_stats,
     )
     unit = save.get_unit(unit_idx)
-    assert unit is not None
+    if unit is None:
+        sys.stderr.write(f"Error: Unit {args.unit} not found\n")
+        return 1
 
     if not _run_pre_write_gate(save, f"Build '{args.build}' on Unit {args.unit}"):
         return 1

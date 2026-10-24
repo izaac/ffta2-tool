@@ -122,5 +122,7 @@ def encode_ffta2_string(text: str, length: int = CUSTOM_NAME_BUFFER_LEN) -> byte
             raise ValueError(f"Unsupported character {ch!r} in FFTA2 name {text!r}")
         out[idx] = byte_val
     result = bytes(out)
-    assert decode_ffta2_string(result, max_len=length) == text
+    decoded = decode_ffta2_string(result, max_len=length)
+    if decoded != text:
+        raise RuntimeError(f"FFTA2 string round-trip encoding mismatch: encoded {text!r} but decoded {decoded!r}")
     return result

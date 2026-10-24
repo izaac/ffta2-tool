@@ -125,6 +125,23 @@ MIN_SAVE_SIZE = 0x10000
 SAVE_NAME_GLOB = "*Final Fantasy Tactics A2*.sav"
 
 
+def _validate_int_range(val: int, min_val: int, max_val: int, name: str) -> int:
+    """Reject non-int, bool, and out-of-range inputs instead of silently masking them."""
+    if isinstance(val, bool) or not isinstance(val, int):
+        raise TypeError(f"{name} must be an integer, got {type(val).__name__} ({val!r})")
+    if not (min_val <= val <= max_val):
+        raise ValueError(f"{name} must be in range {min_val}..{max_val}, got {val}")
+    return val
+
+
+def _validate_u8(val: int, name: str) -> int:
+    return _validate_int_range(val, 0, 0xFF, name)
+
+
+def _validate_u16(val: int, name: str) -> int:
+    return _validate_int_range(val, 0, 0xFFFF, name)
+
+
 def atomic_write(filepath: str | Path, data: bytes) -> None:
     """Safely writes data to a temporary sibling file then replaces target atomically with fsync."""
     path = Path(filepath)
@@ -245,7 +262,7 @@ class Unit:
 
     @character_id.setter
     def character_id(self, val: int) -> None:
-        self._data[OFF_UNIT_CHAR_ID] = val & 0xFF
+        self._data[OFF_UNIT_CHAR_ID] = _validate_u8(val, "character_id")
 
     @property
     def is_recruited(self) -> bool:
@@ -258,7 +275,7 @@ class Unit:
 
     @job_id.setter
     def job_id(self, val: int) -> None:
-        job = val & 0xFF
+        job = _validate_u8(val, "job_id")
         self._data[OFF_UNIT_JOB_ID] = job
         struct.pack_into("<H", self._data, OFF_UNIT_JOB_MSG_ID, 1000 + job)
         struct.pack_into("<H", self._data, OFF_UNIT_JOB_STR_ID, 0x9470 + job)
@@ -269,7 +286,7 @@ class Unit:
 
     @race_id.setter
     def race_id(self, val: int) -> None:
-        self._data[OFF_UNIT_RACE_ID] = val & 0xFF
+        self._data[OFF_UNIT_RACE_ID] = _validate_u8(val, "race_id")
 
     @property
     def roster_index(self) -> int:
@@ -277,7 +294,7 @@ class Unit:
 
     @roster_index.setter
     def roster_index(self, val: int) -> None:
-        self._data[OFF_UNIT_ROSTER_INDEX] = val & 0xFF
+        self._data[OFF_UNIT_ROSTER_INDEX] = _validate_int_range(val, 1, MAX_UNITS, "roster_index")
 
     @property
     def status_flags(self) -> int:
@@ -285,7 +302,7 @@ class Unit:
 
     @status_flags.setter
     def status_flags(self, val: int) -> None:
-        struct.pack_into("<H", self._data, OFF_UNIT_STATUS_FLAGS, val & 0xFFFF)
+        struct.pack_into("<H", self._data, OFF_UNIT_STATUS_FLAGS, _validate_u16(val, "status_flags"))
 
     @property
     def name_id(self) -> int:
@@ -293,7 +310,7 @@ class Unit:
 
     @name_id.setter
     def name_id(self, val: int) -> None:
-        struct.pack_into("<H", self._data, OFF_UNIT_NAME_ID, val & 0xFFFF)
+        struct.pack_into("<H", self._data, OFF_UNIT_NAME_ID, _validate_u16(val, "name_id"))
 
     @property
     def name(self) -> str:
@@ -305,7 +322,7 @@ class Unit:
 
     @exp.setter
     def exp(self, val: int) -> None:
-        self._data[OFF_UNIT_EXP] = val & 0xFF
+        self._data[OFF_UNIT_EXP] = _validate_u8(val, "exp")
 
     @property
     def primary_ability_set(self) -> int:
@@ -313,7 +330,7 @@ class Unit:
 
     @primary_ability_set.setter
     def primary_ability_set(self, val: int) -> None:
-        self._data[OFF_UNIT_PRIMARY_A_SET] = val & 0xFF
+        self._data[OFF_UNIT_PRIMARY_A_SET] = _validate_u8(val, "primary_ability_set")
 
     @property
     def secondary_ability_set(self) -> int:
@@ -321,7 +338,7 @@ class Unit:
 
     @secondary_ability_set.setter
     def secondary_ability_set(self, val: int) -> None:
-        self._data[OFF_UNIT_SECONDARY_A_SET] = val & 0xFF
+        self._data[OFF_UNIT_SECONDARY_A_SET] = _validate_u8(val, "secondary_ability_set")
 
     @property
     def max_hp(self) -> int:
@@ -329,7 +346,7 @@ class Unit:
 
     @max_hp.setter
     def max_hp(self, val: int) -> None:
-        struct.pack_into("<H", self._data, OFF_UNIT_MAX_HP, val & 0xFFFF)
+        struct.pack_into("<H", self._data, OFF_UNIT_MAX_HP, _validate_u16(val, "max_hp"))
 
     @property
     def cur_hp(self) -> int:
@@ -337,7 +354,7 @@ class Unit:
 
     @cur_hp.setter
     def cur_hp(self, val: int) -> None:
-        struct.pack_into("<H", self._data, OFF_UNIT_CUR_HP, val & 0xFFFF)
+        struct.pack_into("<H", self._data, OFF_UNIT_CUR_HP, _validate_u16(val, "cur_hp"))
 
     @property
     def max_mp(self) -> int:
@@ -345,7 +362,7 @@ class Unit:
 
     @max_mp.setter
     def max_mp(self, val: int) -> None:
-        struct.pack_into("<H", self._data, OFF_UNIT_MAX_MP, val & 0xFFFF)
+        struct.pack_into("<H", self._data, OFF_UNIT_MAX_MP, _validate_u16(val, "max_mp"))
 
     @property
     def cur_mp(self) -> int:
@@ -353,7 +370,7 @@ class Unit:
 
     @cur_mp.setter
     def cur_mp(self, val: int) -> None:
-        struct.pack_into("<H", self._data, OFF_UNIT_CUR_MP, val & 0xFFFF)
+        struct.pack_into("<H", self._data, OFF_UNIT_CUR_MP, _validate_u16(val, "cur_mp"))
 
     @property
     def level(self) -> int:
@@ -361,7 +378,7 @@ class Unit:
 
     @level.setter
     def level(self, val: int) -> None:
-        self._data[OFF_UNIT_LEVEL] = val & 0xFF
+        self._data[OFF_UNIT_LEVEL] = _validate_int_range(val, 1, 99, "level")
 
     @property
     def speed(self) -> int:
@@ -369,7 +386,7 @@ class Unit:
 
     @speed.setter
     def speed(self, val: int) -> None:
-        self._data[OFF_UNIT_SPEED] = val & 0xFF
+        self._data[OFF_UNIT_SPEED] = _validate_u8(val, "speed")
 
     @property
     def attack(self) -> int:
@@ -377,7 +394,7 @@ class Unit:
 
     @attack.setter
     def attack(self, val: int) -> None:
-        struct.pack_into("<H", self._data, OFF_UNIT_ATTACK, val & 0xFFFF)
+        struct.pack_into("<H", self._data, OFF_UNIT_ATTACK, _validate_u16(val, "attack"))
 
     @property
     def defense(self) -> int:
@@ -385,7 +402,7 @@ class Unit:
 
     @defense.setter
     def defense(self, val: int) -> None:
-        struct.pack_into("<H", self._data, OFF_UNIT_DEFENSE, val & 0xFFFF)
+        struct.pack_into("<H", self._data, OFF_UNIT_DEFENSE, _validate_u16(val, "defense"))
 
     @property
     def matk(self) -> int:
@@ -393,7 +410,7 @@ class Unit:
 
     @matk.setter
     def matk(self, val: int) -> None:
-        struct.pack_into("<H", self._data, OFF_UNIT_MATK, val & 0xFFFF)
+        struct.pack_into("<H", self._data, OFF_UNIT_MATK, _validate_u16(val, "matk"))
 
     @property
     def mdef(self) -> int:
@@ -401,7 +418,7 @@ class Unit:
 
     @mdef.setter
     def mdef(self, val: int) -> None:
-        struct.pack_into("<H", self._data, OFF_UNIT_MDEF, val & 0xFFFF)
+        struct.pack_into("<H", self._data, OFF_UNIT_MDEF, _validate_u16(val, "mdef"))
 
     @property
     def weapon_id(self) -> int:
@@ -409,7 +426,7 @@ class Unit:
 
     @weapon_id.setter
     def weapon_id(self, item_id: int) -> None:
-        struct.pack_into("<H", self._data, OFF_UNIT_EQUIP1, item_id & 0xFFFF)
+        struct.pack_into("<H", self._data, OFF_UNIT_EQUIP1, _validate_u16(item_id, "weapon_id"))
 
     @property
     def shield_id(self) -> int:
@@ -417,7 +434,7 @@ class Unit:
 
     @shield_id.setter
     def shield_id(self, item_id: int) -> None:
-        struct.pack_into("<H", self._data, OFF_UNIT_EQUIP2, item_id & 0xFFFF)
+        struct.pack_into("<H", self._data, OFF_UNIT_EQUIP2, _validate_u16(item_id, "shield_id"))
 
     @property
     def helm_id(self) -> int:
@@ -425,7 +442,7 @@ class Unit:
 
     @helm_id.setter
     def helm_id(self, item_id: int) -> None:
-        struct.pack_into("<H", self._data, OFF_UNIT_EQUIP3, item_id & 0xFFFF)
+        struct.pack_into("<H", self._data, OFF_UNIT_EQUIP3, _validate_u16(item_id, "helm_id"))
 
     @property
     def armor_id(self) -> int:
@@ -433,7 +450,7 @@ class Unit:
 
     @armor_id.setter
     def armor_id(self, item_id: int) -> None:
-        struct.pack_into("<H", self._data, OFF_UNIT_EQUIP4, item_id & 0xFFFF)
+        struct.pack_into("<H", self._data, OFF_UNIT_EQUIP4, _validate_u16(item_id, "armor_id"))
 
     @property
     def accessory_id(self) -> int:
@@ -441,7 +458,7 @@ class Unit:
 
     @accessory_id.setter
     def accessory_id(self, item_id: int) -> None:
-        struct.pack_into("<H", self._data, OFF_UNIT_EQUIP5, item_id & 0xFFFF)
+        struct.pack_into("<H", self._data, OFF_UNIT_EQUIP5, _validate_u16(item_id, "accessory_id"))
 
     @property
     def r_ability(self) -> int:
@@ -449,7 +466,7 @@ class Unit:
 
     @r_ability.setter
     def r_ability(self, val: int) -> None:
-        struct.pack_into("<H", self._data, OFF_UNIT_R_ABILITY, val & 0xFFFF)
+        struct.pack_into("<H", self._data, OFF_UNIT_R_ABILITY, _validate_u16(val, "r_ability"))
 
     @property
     def p_ability(self) -> int:
@@ -457,7 +474,7 @@ class Unit:
 
     @p_ability.setter
     def p_ability(self, val: int) -> None:
-        struct.pack_into("<H", self._data, OFF_UNIT_P_ABILITY, val & 0xFFFF)
+        struct.pack_into("<H", self._data, OFF_UNIT_P_ABILITY, _validate_u16(val, "p_ability"))
 
     def master_all_abilities(self) -> None:
         """Master all abilities by setting the full ability array (0x5A..0x11C) to 0xFF.
@@ -473,8 +490,12 @@ class Unit:
 
     def unlock_ability_byte(self, offset: int, bit_mask: int = 0x80) -> None:
         """Safely unlock an ability at a specific relative offset within the unit struct (0x5A..0x11C)."""
-        if OFF_UNIT_ABILITIES_START <= offset < OFF_UNIT_ABILITIES_END:
-            self._data[offset] |= bit_mask & 0xFF
+        _validate_u8(bit_mask, "bit_mask")
+        if not (OFF_UNIT_ABILITIES_START <= offset < OFF_UNIT_ABILITIES_END):
+            raise ValueError(
+                f"Ability offset 0x{offset:X} out of range 0x{OFF_UNIT_ABILITIES_START:X}..0x{OFF_UNIT_ABILITIES_END:X}"
+            )
+        self._data[offset] |= bit_mask
 
 
 class FFTA2Save:
@@ -516,7 +537,8 @@ class FFTA2Save:
         if len(clean) > MAX_CUSTOM_NAME_CHARS:
             raise ValueError(f"Leader name '{clean}' exceeds maximum length of {MAX_CUSTOM_NAME_CHARS} characters")
         encoded = encode_ffta2_string(clean, length=CUSTOM_NAME_BUFFER_LEN)
-        assert decode_ffta2_string(encoded, max_len=CUSTOM_NAME_BUFFER_LEN) == clean
+        if decode_ffta2_string(encoded, max_len=CUSTOM_NAME_BUFFER_LEN) != clean:
+            raise RuntimeError(f"Leader name '{clean}' did not survive charset round-trip")
         self.plaintext[OFF_LEADER_NAME : OFF_LEADER_NAME + CUSTOM_NAME_BUFFER_LEN] = encoded
 
     @property
@@ -532,7 +554,8 @@ class FFTA2Save:
         if len(clean) > MAX_CUSTOM_NAME_CHARS:
             raise ValueError(f"Clan name '{clean}' exceeds maximum length of {MAX_CUSTOM_NAME_CHARS} characters")
         encoded = encode_ffta2_string(clean, length=CUSTOM_NAME_BUFFER_LEN)
-        assert decode_ffta2_string(encoded, max_len=CUSTOM_NAME_BUFFER_LEN) == clean
+        if decode_ffta2_string(encoded, max_len=CUSTOM_NAME_BUFFER_LEN) != clean:
+            raise RuntimeError(f"Clan name '{clean}' did not survive charset round-trip")
         self.plaintext[OFF_CLAN_NAME : OFF_CLAN_NAME + CUSTOM_NAME_BUFFER_LEN] = encoded
 
     @property
@@ -677,7 +700,8 @@ class FFTA2Save:
             if unit_index == 0:
                 raise ValueError("Cannot inject into Unit slot 1 (index 0): reserved for story leader Luso")
             target_unit = self.get_unit(unit_index)
-            assert target_unit is not None
+            if target_unit is None:
+                raise RuntimeError(f"Unit {unit_index} not found in unit table")
             if target_unit.is_recruited:
                 if not force:
                     raise ValueError(
@@ -704,7 +728,8 @@ class FFTA2Save:
 
         clamped_level = max(1, min(99, int(level)))
         unit = self.get_unit(target_idx)
-        assert unit is not None
+        if unit is None:
+            raise RuntimeError(f"Unit {target_idx} not found in unit table")
 
         # Clone an existing recruited non-Luso unit of the same race (falling back to any recruited non-Luso unit)
         template_bytes: bytes | None = None
@@ -820,6 +845,7 @@ class FFTA2Save:
         Slot layout: [Item ID (uint16)] [Equipped Count (uint8)] [Total Count (uint8)]
         Returns True if item was added or updated, False if clan inventory bag is full.
         """
+        _validate_u16(item_id, "item_id")
         # Check if already present
         first_free_slot = None
         for i in range(MAX_INVENTORY_SLOTS):
@@ -836,7 +862,7 @@ class FFTA2Save:
                 first_free_slot = off
 
         if first_free_slot is not None:
-            struct.pack_into("<H", self.plaintext, first_free_slot, item_id & 0xFFFF)
+            struct.pack_into("<H", self.plaintext, first_free_slot, item_id)
             self.plaintext[first_free_slot + 2] = min(equipped_count, 24)
             self.plaintext[first_free_slot + 3] = min(total_count, 99)
             return True
