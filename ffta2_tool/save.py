@@ -20,6 +20,7 @@ from ffta2_tool.charset import (
 from ffta2_tool.config import get_default_backup_dir
 from ffta2_tool.crypto import (
     CHECKSUM_OFFSET,
+    CHECKSUM_RANGE_COUNT,
     ENCRYPTED_END,
     RECORD_HEADER_OFFSET,
     calculate_checksum,
@@ -953,7 +954,7 @@ class FFTA2Save:
         out = Path(output_path) if output_path else self.path
 
         # Recalculate checksum over plaintext
-        new_checksum = calculate_checksum(self.plaintext)
+        new_checksum = calculate_checksum(self.plaintext, start=RECORD_HEADER_OFFSET, count=CHECKSUM_RANGE_COUNT)
         self.plaintext[CHECKSUM_OFFSET : CHECKSUM_OFFSET + 4] = struct.pack("<I", new_checksum)
 
         # Re-encrypt

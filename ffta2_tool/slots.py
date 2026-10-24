@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from ffta2_tool.charset import decode_ffta2_string
-from ffta2_tool.crypto import calculate_checksum
+from ffta2_tool.crypto import apply_keystream, calculate_checksum, generate_keystream
 from ffta2_tool.layout import (
     DIFFICULTY_RAW_HARD,
     PAYLOAD_OFF_DIFFICULTY,
@@ -62,30 +62,23 @@ BANK_SIZE = 0x40000  # 256 KB
 def compute_lcg_keystream(seed: int, length: int = PAYLOAD_SIZE) -> bytes:
     """Generate keystream bytes using the reverse-engineered 8-bit LCG.
 
-    ARM9 routine (0x0210CF84):
+    Thin wrapper over ffta2_tool.crypto.generate_keystream (ARM9 0x0210CF84):
         state = seed & 0xFF
         for each byte:
             state = (state * 5 + 1) & 0xFF
             yield state
     """
-    state = seed & 0xFF
-    stream = bytearray(length)
-    for i in range(length):
-        state = (state * 5 + 1) & 0xFF
-        stream[i] = state
-    return bytes(stream)
+    return generate_keystream(seed, length)
 
 
-def calculate_metadata_checksum(data: bytes | bytearray) -> int:
-    """Calculate the 32-bit checksum for a 220-byte metadata copy."""
-    count = METADATA_COPY_SIZE
-    total = 0
-    for i in range(count):
-        b = 0 if i < 4 else data[i]
-        signed_b = b if b < 128 else b - 256
-        term = (signed_b + (count - i)) & 0xFFFFFFFF
-        total = (total + term) & 0xFFFFFFFF
-    return total
+def calculate_metadata_checksum(data: bytes | bytearray, start: int = 0) -> int:
+    """Calculate the 32-bit checksum for a 220-byte metadata copy.
+
+    Thin wrapper over ffta2_tool.crypto.calculate_checksum: the metadata checksum uses
+    the same signed-byte weighting as the save record, over 0xDC bytes with the first
+    four (the checksum field itself) treated as zero.
+    """
+    return calculate_checksum(data, start=start, count=METADATA_COPY_SIZE, zero_first=4)
 
 
 def active_metadata_base(raw: bytes | bytearray) -> int:
@@ -196,9 +189,8 @@ class SlotManager:
     def _read_record(self, base: int) -> tuple[int, int, bytearray]:
         stored_chk, _header_magic, seed = struct.unpack_from("<IHH", self.raw, base)
         ks = compute_lcg_keystream(seed, SLOT_PAYLOAD_SIZE)
-        payload = bytearray(SLOT_PAYLOAD_SIZE)
-        for i in range(SLOT_PAYLOAD_SIZE):
-            payload[i] = (self.raw[base + 8 + i] - ks[i]) & 0xFF
+        payload = bytearray(self.raw[base + 8 : base + 8 + SLOT_PAYLOAD_SIZE])
+        apply_keystream(payload, ks, decrypt=True)
         return (stored_chk, seed, payload)
 
     @staticmethod
@@ -208,14 +200,13 @@ class SlotManager:
         work[4:6] = struct.pack("<H", 0x0002)
         work[6:8] = struct.pack("<H", seed)
         work[8:] = payload
-        return calculate_checksum(work, header_offset=0, count=SLOT_RECORD_SIZE)
+        return calculate_checksum(work, count=len(work), zero_first=4)
 
     def _write_record(self, base: int, payload: bytes | bytearray, seed: int) -> None:
         new_chk = self._record_checksum(payload, seed)
         ks = compute_lcg_keystream(seed, SLOT_PAYLOAD_SIZE)
-        enc_payload = bytearray(SLOT_PAYLOAD_SIZE)
-        for i in range(SLOT_PAYLOAD_SIZE):
-            enc_payload[i] = (payload[i] + ks[i]) & 0xFF
+        enc_payload = bytearray(payload)
+        apply_keystream(enc_payload, ks, decrypt=False)
         struct.pack_into("<IHH", self.raw, base, new_chk, 0x0002, seed)
         self.raw[base + 8 : base + 8 + SLOT_PAYLOAD_SIZE] = enc_payload
 
