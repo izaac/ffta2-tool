@@ -2,22 +2,18 @@
 
 from __future__ import annotations
 
-import glob
-import os
-import shutil
 import struct
 import warnings
-from datetime import datetime
 from pathlib import Path
 
-from ffta2_tool import layout
+from ffta2_tool import layout, save_io
+from ffta2_tool.builds import resolve_build
 from ffta2_tool.charset import (
     CUSTOM_NAME_BUFFER_LEN,
     MAX_CUSTOM_NAME_CHARS,
     decode_ffta2_string,
     encode_ffta2_string,
 )
-from ffta2_tool.config import get_default_backup_dir
 from ffta2_tool.crypto import (
     CHECKSUM_OFFSET,
     CHECKSUM_RANGE_COUNT,
@@ -39,6 +35,17 @@ from ffta2_tool.mappings import (
     resolve_character_name_id,
     resolve_job_spec,
 )
+from ffta2_tool.save_io import MIN_SAVE_SIZE
+from ffta2_tool.slots import SlotManager
+from ffta2_tool.stats import compute_god_stats
+
+# Backward-compatible re-exports: file I/O lives in ffta2_tool.save_io, while
+# atomic_write / auto_detect_save / create_backup_snapshot / SAVE_NAME_GLOB stay
+# importable from here so existing callers (cli, scripts) keep working.
+SAVE_NAME_GLOB = save_io.SAVE_NAME_GLOB
+atomic_write = save_io.atomic_write
+auto_detect_save = save_io.auto_detect_save
+create_backup_snapshot = save_io.create_backup_snapshot
 
 # Every OFF_* / *_BASE constant below is a BUFFER offset: an absolute offset into the
 # staged 0x3408-byte record window that starts at 0x01B8 (see ffta2_tool.layout).
@@ -118,12 +125,6 @@ MAX_INVENTORY_SLOTS = 400
 # The remaining 58 bits (entries 1..40 and 47..64) are the exact 58 named Clan Privileges.
 CLAN_PRIVILEGE_MASK = bytes.fromhex("f0ffffffff0ffcff0f")
 
-# Minimum plausible FFTA2 save size (NDS saves are 512 KiB; floor filters junk matches)
-MIN_SAVE_SIZE = 0x10000
-
-# Common save-file name fragment used across emulators and handheld SD cards
-SAVE_NAME_GLOB = "*Final Fantasy Tactics A2*.sav"
-
 
 def _validate_int_range(val: int, min_val: int, max_val: int, name: str) -> int:
     """Reject non-int, bool, and out-of-range inputs instead of silently masking them."""
@@ -140,113 +141,6 @@ def _validate_u8(val: int, name: str) -> int:
 
 def _validate_u16(val: int, name: str) -> int:
     return _validate_int_range(val, 0, 0xFFFF, name)
-
-
-def atomic_write(filepath: str | Path, data: bytes) -> None:
-    """Safely writes data to a temporary sibling file then replaces target atomically with fsync."""
-    path = Path(filepath)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f"{path.name}.tmp_{os.getpid()}")
-    try:
-        with open(tmp_path, "wb") as f:
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, path)
-        if hasattr(os, "sync"):
-            import contextlib
-
-            with contextlib.suppress(AttributeError, OSError):
-                os.sync()
-    finally:
-        if tmp_path.exists():
-            import contextlib
-
-            with contextlib.suppress(OSError):
-                tmp_path.unlink()
-
-
-def auto_detect_save(search_paths: list[str] | None = None) -> str | None:
-    """Attempts to find the most relevant FFTA2 save file automatically.
-
-    Checks mounted handheld/media SD cards, ~/Documents/FFTA2_Backups/, and the
-    current directory (in that priority order) unless custom glob patterns are
-    supplied via search_paths. Returns the most recently modified valid
-    candidate, or None when nothing is found.
-    """
-    candidates: list[str] = []
-
-    if search_paths is not None:
-        for pattern in search_paths:
-            candidates.extend(glob.glob(os.path.expanduser(pattern)))
-    else:
-        # Removable media mounts (retro handheld SD cards, flashcards, volumes)
-        # Note: /mnt is intentionally excluded to avoid slow/hanging network or FUSE cloud mounts (e.g. rclone/CIFS).
-        for mount_root in ("/run/media", "/media", "/Volumes"):
-            for layout in (
-                "*/*/*/Saves/nds/common",
-                "*/*/*/Saves/NDS/common",
-                "*/*/*/Saves/nds",
-                "*/*/*/Saves/NDS",
-                "*/Saves/nds/common",
-                "*/Saves/NDS/common",
-                "*/Saves/nds",
-                "*/Saves/NDS",
-                "*/*/*/*",
-                "*/*/*",
-                "*/*",
-                "*",
-            ):
-                candidates.extend(glob.glob(f"{mount_root}/{layout}/{SAVE_NAME_GLOB}"))
-
-        if os.name == "nt":
-            import string
-
-            for letter in string.ascii_uppercase[2:]:
-                candidates.extend(glob.glob(f"{letter}:\\Saves\\nds\\common\\{SAVE_NAME_GLOB}"))
-                candidates.extend(glob.glob(f"{letter}:\\Saves\\NDS\\common\\{SAVE_NAME_GLOB}"))
-                candidates.extend(glob.glob(f"{letter}:\\Saves\\nds\\{SAVE_NAME_GLOB}"))
-                candidates.extend(glob.glob(f"{letter}:\\Saves\\NDS\\{SAVE_NAME_GLOB}"))
-
-        # Local backup directory, repo examples directory, and current directory fallbacks
-        backup_dir = get_default_backup_dir()
-        try:
-            if backup_dir.is_dir():
-                candidates.extend(glob.glob(str(backup_dir / "*.sav")))
-        except OSError:
-            pass
-
-        repo_examples = Path(__file__).resolve().parent.parent / "examples"
-        try:
-            if repo_examples.is_dir():
-                candidates.extend(glob.glob(str(repo_examples / "*.sav")))
-        except OSError:
-            pass
-
-        candidates.extend(glob.glob("*.sav"))
-
-    valid = [p for p in candidates if os.path.isfile(p) and os.path.getsize(p) >= MIN_SAVE_SIZE]
-    if not valid:
-        return None
-
-    def _save_priority(path_str: str) -> tuple[int, float]:
-        name_lower = Path(path_str).name.lower()
-        is_scratch = any(k in name_lower for k in ("test", "sample", "copy", "bak"))
-        return (0 if not is_scratch else -1, os.path.getmtime(path_str))
-
-    valid.sort(key=_save_priority, reverse=True)
-    return valid[0]
-
-
-def create_backup_snapshot(filepath: str | Path, backup_dir: str | Path | None = None) -> Path:
-    """Creates a timestamped snapshot '<name>.bak_YYYYMMDD_HHMMSS' in the centralized backup folder."""
-    path = Path(filepath)
-    dest_dir = get_default_backup_dir(backup_dir)
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_path = dest_dir / f"{path.name}.bak_{timestamp}"
-    shutil.copy2(path, backup_path)
-    return backup_path
 
 
 class Unit:
@@ -502,8 +396,6 @@ class FFTA2Save:
     """FFTA2 Save File manager."""
 
     def __init__(self, filepath: str | Path, slot: int = 0):
-        from ffta2_tool.slots import SlotManager
-
         self.path = Path(filepath)
         self.raw_data = bytearray(self.path.read_bytes())
         if len(self.raw_data) < MIN_SAVE_SIZE:
@@ -561,8 +453,6 @@ class FFTA2Save:
     @property
     def slot_player_name(self) -> str:
         """Leader name shown on the load-screen card of the loaded slot."""
-        from ffta2_tool.slots import SlotManager
-
         return SlotManager(self.raw_data).get_slot_preview(self.slot)["leader_name"]
 
     @property
@@ -680,9 +570,6 @@ class FFTA2Save:
           status_flags, level, exp, stats, ability sets, equipment, and clears learned
           ability/AP arrays to the fresh recruit state.
         """
-        from ffta2_tool.patcher import resolve_build
-        from ffta2_tool.stats import compute_god_stats
-
         # Verify contiguous existing roster (slots 0..N-1 recruited, N..23 empty)
         recruited_indices = [u.index for u in self.units if u.is_recruited]
         if not recruited_indices or recruited_indices[0] != 0:
@@ -997,8 +884,6 @@ class FFTA2Save:
         # Always refresh the load-screen preview and wipe the quicksave (any save size),
         # and mirror dual banks when the image has a second bank. The written image keeps
         # the input size (64 KB melonDS or 512 KB cart dumps).
-        from ffta2_tool.slots import SlotManager
-
         sm = SlotManager(final_data)
         sm.refresh_preview(self.slot)
         sm.deactivate_quicksave()

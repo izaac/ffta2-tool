@@ -8,13 +8,14 @@ from pathlib import Path
 from typing import Any
 
 from ffta2_tool.arm_tools import extract_arm9, extract_overlays, inspect_nds_rom
+from ffta2_tool.builds import get_meta_squad_builds
 from ffta2_tool.config import load_config
 from ffta2_tool.mappings import (
     get_item_name,
     get_job_name,
     get_race_name,
 )
-from ffta2_tool.patcher import META_SQUAD_BUILDS, apply_meta_squad, equip_unit_build
+from ffta2_tool.patcher import apply_meta_squad, equip_unit_build
 from ffta2_tool.save import MAX_UNITS, FFTA2Save, auto_detect_save, create_backup_snapshot
 from ffta2_tool.slots import SlotManager
 from ffta2_tool.validator import validate_save, validate_unit
@@ -363,7 +364,7 @@ def cmd_patch_meta_squad(args: argparse.Namespace) -> int:
 
     out_path = _save_with_args(save, args)
     print(f"[SUCCESS] Meta squad successfully applied to Slot {slot_idx + 1} and verified: {out_path}!")
-    for build in META_SQUAD_BUILDS:
+    for build in get_meta_squad_builds():
         job_str = get_job_name(build["job_id"])
         w_str = get_item_name(build["weapon_id"])
         print(

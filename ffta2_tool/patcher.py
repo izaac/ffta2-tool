@@ -9,112 +9,37 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ffta2_tool.config import load_builds, load_builds_by_key
-from ffta2_tool.mappings import get_job_name, get_job_race_id
+from ffta2_tool.builds import DEFAULT_META_SQUAD_BUILDS, get_meta_squad_builds, resolve_build
+from ffta2_tool.mappings import get_job_race_id
 from ffta2_tool.save import FFTA2Save
+from ffta2_tool.stats import topup_clan_stats, topup_unit_stats
 
-# Built-in fallback used when builds.toml is missing or unreadable
-DEFAULT_META_SQUAD_BUILDS: list[dict[str, Any]] = [
-    # Slot 0: Luso (Hume) - Parivir / Paladin
-    {
-        "key": "luso",
-        "name": "Luso",
-        "slot": 0,
-        "job_id": 0x08,  # Parivir
-        "primary_set": 0x08,  # Flair
-        "secondary_set": 0x06,  # Chivalry (Paladin: Nurse, Saint Cross, Holy Blade)
-        "r_ability": 0x033C,  # Strike Back (Hume Parivir)
-        "p_ability": 0x035C,  # Dual Wield (Hume Ninja only)
-        "weapon_id": 0x0074,  # Hyakushiki-masamune (+78 Atk, Katana)
-        "shield_id": 0x0000,  # None (Parivir safely single-wields; off-hand weapon black-screened Unit Info)
-        "helm_id": 0x013F,  # Thief's Cap (+2 Speed)
-        "armor_id": 0x015C,  # Ninja Gear (+24 Def, +4 Speed)
-        "accessory_id": 0x0180,  # Ninja Tabi (+2 Move)
-    },
-    # Slot 1: Nu Mou - Sage / Alchemist
-    {
-        "key": "nu_mou",
-        "name": "Nu Mou",
-        "slot": 1,
-        "job_id": 0x1F,  # Sage
-        "primary_set": 0x1C,  # Sagacity (Gigaflare, Bio, Aero)
-        "secondary_set": 0x1A,  # Alchemy (100% Item Delivery)
-        "r_ability": 0x033A,  # Reflex
-        "p_ability": 0x0355,  # Magick Up
-        "weapon_id": 0x010F,  # Zeus Mace (+30 Atk, +10 Magick)
-        "shield_id": 0x0127,  # Genji Shield (+7 Def, +5 Evade, +2 MRes)
-        "helm_id": 0x013E,  # Gold Hairpin (+10 MRes, Silence immune)
-        "armor_id": 0x0171,  # Lordly Robe (+18 Def, +35 MRes, +5 Atk, +5 Mag)
-        "accessory_id": 0x017E,  # Faerie Shoes (Teleport Movement!)
-    },
-    # Slot 2: Viera - Red Mage / Summoner
-    {
-        "key": "viera",
-        "name": "Viera",
-        "slot": 2,
-        "job_id": 0x27,  # Red Mage
-        "primary_set": 0x22,  # Red Magick (Doublecast, Cure, Cura, Protect)
-        "secondary_set": 0x24,  # Summoning Magick (Maduin, Phoenix, Unicorn, Kirin)
-        "r_ability": 0x033A,  # Reflex (Viera Fencer)
-        "p_ability": 0x036A,  # Blood Price (Viera Spellblade)
-        "weapon_id": 0x0050,  # Femme Fatale (+49 Atk, +2 Mag Rapier)
-        "shield_id": 0x0000,  # None
-        "helm_id": 0x0138,  # Ribbon (Complete status immunity)
-        "armor_id": 0x015B,  # Minerva Bustier (Holy/Dark absorb)
-        "accessory_id": 0x0189,  # Angel Ring (Auto-Reraise safety against Blood Price)
-    },
-    # Slot 3: Bangaa - Cannoneer / Defender
-    {
-        "key": "bangaa",
-        "name": "Bangaa",
-        "slot": 3,
-        "job_id": 0x16,  # Cannoneer
-        "primary_set": 0x16,  # Cannonry (Ether Shell +60 MP, Mortar, Target)
-        "secondary_set": 0x11,  # Warding (Defender: Aura Auto-Life+Regen, Meltdown)
-        "r_ability": 0x033C,  # Strike Back (Bangaa Gladiator)
-        "p_ability": 0x0353,  # Attack Up (Bangaa Templar)
-        "weapon_id": 0x00F0,  # Rocket Punch (Hand Cannon)
-        "shield_id": 0x0000,  # None
-        "helm_id": 0x013F,  # Thief's Cap (+2 Speed)
-        "armor_id": 0x015F,  # Mirage Vest (+30 Def, +12 MRes)
-        "accessory_id": 0x0184,  # Genji Gloves (+5 Atk, +5 Def)
-    },
-    # Slot 4: Hume (Generic) - Hunter / Seer
-    {
-        "key": "hume",
-        "name": "Hume",
-        "slot": 4,
-        "job_id": 0x0C,  # Hunter
-        "primary_set": 0x0C,  # Trapping (Hunter: Ultima Shot, Sonic Boom)
-        "secondary_set": 0x0D,  # High Magick (Seer: Recharge, Magick Frenzy, Esuna)
-        "r_ability": 0x033A,  # Reflex
-        "p_ability": 0x0359,  # Pierce
-        "weapon_id": 0x00CA,  # Seventh Heaven (Greatbow: Ultima Shot)
-        "shield_id": 0x0000,  # None
-        "helm_id": 0x013F,  # Thief's Cap (+2 Speed)
-        "armor_id": 0x015C,  # Ninja Gear (+24 Def, +4 Speed)
-        "accessory_id": 0x017B,  # Winged Boots (Float / Levitate)
-    },
-    # Slot 5: Moogle - Fusilier / Juggler
-    {
-        "key": "moogle",
-        "name": "Moogle",
-        "slot": 5,
-        "job_id": 0x30,  # Fusilier
-        "primary_set": 0x29,  # Gunmanship (Stopshot, Charmshot)
-        "secondary_set": 0x2A,  # Acrobatics (Juggler: Smile Toss Quicken)
-        "r_ability": 0x033E,  # Return Fire (Moogle Juggler)
-        "p_ability": 0x0361,  # Concentration (Moogle Fusilier)
-        "weapon_id": 0x00D4,  # Peacemaker (8-Range Gun)
-        "shield_id": 0x0000,  # None
-        "helm_id": 0x013F,  # Thief's Cap (+2 Speed)
-        "armor_id": 0x015F,  # Mirage Vest (+30 Def, +12 MRes)
-        "accessory_id": 0x0180,  # Ninja Tabi (+2 Move)
-    },
+__all__ = [
+    "DEFAULT_META_SQUAD_BUILDS",
+    "META_INVENTORY_ITEMS",
+    "META_SQUAD_BUILDS",  # noqa: F822 - resolved lazily by __getattr__ below
+    "apply_meta_squad",
+    "equip_unit_build",
+    "get_meta_squad_builds",
+    "resolve_build",
 ]
 
-# Active squad builds: loaded from repo-root builds.toml, defaulting to the built-ins
-META_SQUAD_BUILDS: list[dict[str, Any]] = load_builds() or DEFAULT_META_SQUAD_BUILDS
+
+def __getattr__(name: str) -> Any:
+    """Resolve ``META_SQUAD_BUILDS`` on first access instead of at import time.
+
+    Importing this module must not touch the filesystem, so the builds database is
+    loaded lazily; ``from ffta2_tool.patcher import META_SQUAD_BUILDS`` still works.
+    """
+    if name == "META_SQUAD_BUILDS":
+        return get_meta_squad_builds()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    """Expose dynamic attribute META_SQUAD_BUILDS to dir() and inspect tooling."""
+    return sorted(set(globals().keys()) | set(__all__))
+
 
 # Ability-teaching weapons and gear for clan inventory injection
 META_INVENTORY_ITEMS: list[int] = [
@@ -213,27 +138,6 @@ META_INVENTORY_ITEMS: list[int] = [
 ]
 
 
-def resolve_build(key_or_name: str, builds_path: str | Path | None = None) -> dict[str, Any] | None:
-    """Resolve a build dictionary from builds.toml by TOML key, build name, or primary job name."""
-    keyed = load_builds_by_key(builds_path)
-    if not keyed:
-        keyed = {str(b.get("key", b["name"])).lower().replace(" ", "_"): b for b in DEFAULT_META_SQUAD_BUILDS}
-
-    norm = key_or_name.strip().lower().replace("-", "_")
-    if norm in keyed:
-        return keyed[norm]
-
-    norm_space = norm.replace("_", " ")
-    for b in keyed.values():
-        if str(b.get("name", "")).lower() == norm_space:
-            return b
-        if str(b.get("job", "")).lower() == norm_space:
-            return b
-        if get_job_name(int(b["job_id"])).lower() == norm_space:
-            return b
-    return None
-
-
 def equip_unit_build(
     save: FFTA2Save,
     unit_index: int,
@@ -251,7 +155,7 @@ def equip_unit_build(
 
     build = resolve_build(build_key, builds_path=builds_path)
     if build is None:
-        available = ", ".join(b.get("key", b["name"]).lower() for b in META_SQUAD_BUILDS)
+        available = ", ".join(b.get("key", b["name"]).lower() for b in get_meta_squad_builds())
         raise ValueError(f"Unknown build '{build_key}'. Available builds: {available}")
 
     job_id = int(build["job_id"])
@@ -272,8 +176,6 @@ def equip_unit_build(
         unit.master_all_abilities()
 
     if topup_stats:
-        from ffta2_tool.stats import topup_unit_stats
-
         topup_unit_stats(unit)
 
     save.sync_equipped_to_inventory()
@@ -299,7 +201,7 @@ def apply_meta_squad(
     (0x5A..0x11C) with 0xFF does not crash the game, but it also masters abilities
     of other races' jobs and unreleased "???" jobs, which no legal save can have.
     """
-    target_builds = builds if builds is not None else META_SQUAD_BUILDS
+    target_builds = builds if builds is not None else get_meta_squad_builds()
 
     if unlock_jobs:
         save.unlock_all_jobs()
@@ -324,8 +226,6 @@ def apply_meta_squad(
             unit.master_all_abilities()
 
     if topup_stats:
-        from ffta2_tool.stats import topup_clan_stats
-
         topup_clan_stats(save, max_units=len(target_builds))
 
     if inject_inventory:
