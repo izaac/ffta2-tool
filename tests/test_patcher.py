@@ -94,6 +94,13 @@ def test_load_builds():
 
     # Missing file yields an empty list (patcher then falls back to defaults)
     assert load_builds("/nonexistent/path/builds.toml") == []
+
+    # Package-data copy must stay byte-identical to repository root
+    root_builds = Path(__file__).resolve().parent.parent / "builds.toml"
+    data_builds = Path(__file__).resolve().parent.parent / "ffta2_tool" / "data" / "builds.toml"
+    assert data_builds.exists(), "ffta2_tool/data/builds.toml missing"
+    assert root_builds.read_bytes() == data_builds.read_bytes(), "ffta2_tool/data/builds.toml out of sync"
+
     print("[PASS] builds.toml loaded and matches built-in meta squad defaults.")
 
 
@@ -836,6 +843,10 @@ def test_load_config():
     from ffta2_tool.config import DEFAULT_CONFIG_EXAMPLE_PATH, load_builds_by_key, load_config
 
     assert DEFAULT_CONFIG_EXAMPLE_PATH.exists(), "config.example.toml missing"
+    root_cfg = Path(__file__).resolve().parent.parent / "config.example.toml"
+    data_cfg = Path(__file__).resolve().parent.parent / "ffta2_tool" / "data" / "config.example.toml"
+    assert data_cfg.exists(), "ffta2_tool/data/config.example.toml missing"
+    assert root_cfg.read_bytes() == data_cfg.read_bytes(), "ffta2_tool/data/config.example.toml out of sync"
     example_cfg = load_config(DEFAULT_CONFIG_EXAMPLE_PATH)
     assert "paths" in example_cfg and "defaults" in example_cfg
     assert example_cfg["defaults"]["slot"] == 1

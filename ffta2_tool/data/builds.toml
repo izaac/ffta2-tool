@@ -1,0 +1,112 @@
+# Final Fantasy Tactics A2 (NDS) - Verified Meta Squad Builds Database
+# Fully audited 6-unit starting clan squad (see docs/meta_squad_strategy.md).
+# Applied by `ffta2-tool patch-meta-squad`; loaded automatically by the patcher.
+# IDs are stored as decimal integers for valid TOML; hex equivalents in comments.
+
+[builds.luso]
+name = "Luso"
+slot = 0
+race = "Hume"
+job = "Parivir"
+secondary_job = "Paladin"
+description = "Katana blademaster with Hyakushiki-masamune, Thief's Cap, Ninja Gear, and Ninja Tabi (single-wield)"
+job_id = 8          # 0x08 Parivir
+primary_set = 8     # 0x08 Flair
+secondary_set = 6   # 0x06 Chivalry (Paladin: Nurse, Saint Cross, Holy Blade)
+r_ability = 828     # 0x033C Strike Back (Hume Parivir)
+p_ability = 860     # 0x035C Dual Wield (Hume Ninja only)
+weapon_id = 116     # 0x0074 Hyakushiki-masamune (+78 Atk, Katana)
+shield_id = 0        # Single-wield: off-hand katana needs Dual Wield active and black-screened Unit Info
+helm_id = 319       # 0x013F Thief's Cap (+2 Speed)
+armor_id = 348      # 0x015C Ninja Gear (+24 Def, +4 Speed)
+accessory_id = 384  # 0x0180 Ninja Tabi (+2 Move)
+
+[builds.nu_mou]
+name = "Nu Mou"
+slot = 1
+race = "Nu Mou"
+job = "Sage"
+secondary_job = "Alchemist"
+description = "Arcane mace medic with Zeus Mace, Genji Shield, Lordly Robe, and Faerie Shoes"
+job_id = 31         # 0x1F Sage
+primary_set = 28    # 0x1C Sagacity (Gigaflare, Bio, Aero)
+secondary_set = 26  # 0x1A Alchemy (100% Item Delivery)
+r_ability = 826     # 0x033A Reflex
+p_ability = 853     # 0x0355 Magick Up
+weapon_id = 271     # 0x010F Zeus Mace (+30 Atk, +10 Magick)
+shield_id = 295     # 0x0127 Genji Shield (+7 Def, +5 Evade, +2 MRes)
+helm_id = 318       # 0x013E Gold Hairpin (+10 MRes, Silence immune)
+armor_id = 369      # 0x0171 Lordly Robe (+18 Def, +35 MRes)
+accessory_id = 382  # 0x017E Faerie Shoes (Teleport Movement)
+
+[builds.viera]
+name = "Viera"
+slot = 2
+race = "Viera"
+job = "Red Mage"
+secondary_job = "Summoner"
+description = "Blood Price doublecaster with Femme Fatale, Ribbon, Minerva Bustier, and Angel Ring"
+job_id = 39         # 0x27 Red Mage
+primary_set = 34    # 0x22 Red Magick (Doublecast, Cure, Cura, Protect)
+secondary_set = 36  # 0x24 Summoning Magick (Maduin, Phoenix, Unicorn, Kirin)
+r_ability = 826     # 0x033A Reflex (Viera Fencer)
+p_ability = 874     # 0x036A Blood Price (Viera Spellblade)
+weapon_id = 80      # 0x0050 Femme Fatale (+49 Atk, +2 Mag Rapier)
+shield_id = 0       # None
+helm_id = 312       # 0x0138 Ribbon (Complete status immunity)
+armor_id = 347      # 0x015B Minerva Bustier (Holy/Dark absorb)
+accessory_id = 393  # 0x0189 Angel Ring (Auto-Reraise vs Blood Price self-KO)
+
+[builds.bangaa]
+name = "Bangaa"
+slot = 3
+race = "Bangaa"
+job = "Cannoneer"
+secondary_job = "Defender"
+description = "Artillery battery with Rocket Punch, Thief's Cap, Mirage Vest, and Genji Gloves"
+job_id = 22         # 0x16 Cannoneer
+primary_set = 22    # 0x16 Cannonry (Ether Shell +60 MP, Mortar, Target)
+secondary_set = 17  # 0x11 Warding (Aura Auto-Life + Regen, Meltdown)
+r_ability = 828     # 0x033C Strike Back (Bangaa Gladiator)
+p_ability = 851     # 0x0353 Attack Up (Bangaa Templar)
+weapon_id = 240     # 0x00F0 Rocket Punch (Hand Cannon)
+shield_id = 0       # None (Cannoneer cannot equip shields)
+helm_id = 319       # 0x013F Thief's Cap (+2 Speed)
+armor_id = 351      # 0x015F Mirage Vest (+30 Def, +12 MRes)
+accessory_id = 388  # 0x0184 Genji Gloves (+5 Atk, +5 Def)
+
+[builds.hume]
+name = "Hume"
+slot = 4
+race = "Hume"
+job = "Hunter"
+secondary_job = "Seer"
+description = "Long-range sniper with Seventh Heaven greatbow, Thief's Cap, Ninja Gear, and Winged Boots"
+job_id = 12         # 0x0C Hunter
+primary_set = 12    # 0x0C Trapping (Ultima Shot, Sonic Boom)
+secondary_set = 13  # 0x0D High Magick (Seer: Recharge, Magick Frenzy, Esuna)
+r_ability = 826     # 0x033A Reflex
+p_ability = 857     # 0x0359 Pierce
+weapon_id = 202     # 0x00CA Seventh Heaven (Greatbow)
+shield_id = 0       # None
+helm_id = 319       # 0x013F Thief's Cap (+2 Speed)
+armor_id = 348      # 0x015C Ninja Gear (+24 Def, +4 Speed)
+accessory_id = 379  # 0x017B Winged Boots (Float / Levitate)
+
+[builds.moogle]
+name = "Moogle"
+slot = 5
+race = "Moogle"
+job = "Fusilier"
+secondary_job = "Juggler"
+description = "Lock-down gunner with Peacemaker, Thief's Cap, Mirage Vest, and Ninja Tabi"
+job_id = 48         # 0x30 Fusilier
+primary_set = 41    # 0x29 Gunmanship (Stopshot, Charmshot)
+secondary_set = 42  # 0x2A Acrobatics (Juggler: Smile Toss Quicken)
+r_ability = 830     # 0x033E Return Fire (Moogle Juggler)
+p_ability = 865     # 0x0361 Concentration (Moogle Fusilier)
+weapon_id = 212     # 0x00D4 Peacemaker (8-Range Gun)
+shield_id = 0       # None
+helm_id = 319       # 0x013F Thief's Cap (+2 Speed)
+armor_id = 351      # 0x015F Mirage Vest (+30 Def, +12 MRes)
+accessory_id = 384  # 0x0180 Ninja Tabi (+2 Move)

@@ -24,6 +24,9 @@ dev = [
 [tool.setuptools]
 packages = ["ffta2_tool"]
 
+[tool.setuptools.package-data]
+ffta2_tool = ["data/*.toml"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py310"

@@ -11,6 +11,9 @@ try:
 except ModuleNotFoundError:  # Python 3.10
     tomllib = None  # type: ignore[assignment]
 
+_PACKAGE_ROOT = Path(__file__).resolve().parent
+_REPO_ROOT = _PACKAGE_ROOT.parent
+
 # Fields every meta squad build entry must provide to the patcher
 REQUIRED_BUILD_KEYS = (
     "name",
@@ -25,7 +28,19 @@ REQUIRED_BUILD_KEYS = (
     "accessory_id",
 )
 
-DEFAULT_CONFIG_EXAMPLE_PATH = Path(__file__).resolve().parent.parent / "config.example.toml"
+
+def _resolve_data_file(name: str) -> Path:
+    """Resolves a bundled TOML data file across repo and package-data layouts.
+
+    Search order: repository root, then ``ffta2_tool/data/`` next to this module.
+    """
+    for candidate in (_REPO_ROOT / name, _PACKAGE_ROOT / "data" / name):
+        if candidate.is_file():
+            return candidate
+    return _PACKAGE_ROOT / "data" / name
+
+
+DEFAULT_CONFIG_EXAMPLE_PATH = _resolve_data_file("config.example.toml")
 
 
 def _strip_comment(line: str) -> str:
@@ -160,14 +175,25 @@ def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
 
 
 def _resolve_builds_file(builds_path: str | Path | None = None) -> Path | None:
+    """Resolves the builds database file.
+
+    Search priority:
+    1. Explicit builds_path argument
+    2. Repository-root builds.toml
+    3. ./builds.toml (current working directory)
+    4. Bundled ffta2_tool/data/builds.toml (installed wheels)
+    """
     if builds_path:
         target = Path(os.path.expanduser(str(builds_path)))
         return target if target.is_file() else None
-    target = Path(__file__).resolve().parent.parent / "builds.toml"
-    if not target.is_file():
-        local = Path("builds.toml")
-        target = local if local.is_file() else target
-    return target if target.is_file() else None
+    repo_root = _REPO_ROOT / "builds.toml"
+    if repo_root.is_file():
+        return repo_root
+    local = Path("builds.toml")
+    if local.is_file():
+        return local
+    pkg_data = _PACKAGE_ROOT / "data" / "builds.toml"
+    return pkg_data if pkg_data.is_file() else None
 
 
 def load_builds_by_key(builds_path: str | Path | None = None) -> dict[str, dict[str, Any]]:
@@ -203,8 +229,9 @@ def load_builds(builds_path: str | Path | None = None) -> list[dict[str, Any]]:
 
     Search priority:
     1. Explicit builds_path argument
-    2. Repository-root builds.toml (next to the package)
-    3. ./builds.toml (working directory)
+    2. ./builds.toml (working directory)
+    3. Repository-root builds.toml
+    4. Bundled ffta2_tool/data/builds.toml from an installed wheel
 
     Returns a list of build dicts sorted by slot. Invalid or missing entries are
     skipped; an empty list is returned when no usable builds file is found.
